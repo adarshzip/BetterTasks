@@ -1,153 +1,211 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { GTaskList, WireTask } from '@/model/types'
 import type { Theme } from './theme'
-import { groupTasks, type ViewMode } from '@/model/grouping'
-import { toTask } from '@/model/tree'
-import { send, PanelError } from '@/lib/messaging'
-import type { Snapshot } from '@/background/messages'
+import { groupTasks, knownCategories, type ViewMode } from '@/model/grouping'
+import { buildTree, toTask } from '@/model/tree'
+import { useTasks } from '@/state/useTasks'
 import { loadViewState, saveViewState } from '@/state/store'
 import { TaskTree } from './TaskTree'
-
-type Status = 'loading' | 'ready' | 'signedOut' | 'error'
+import { QuickAdd } from './QuickAdd'
+import { Toast } from './Toast'
+import { ListMenu } from './ListMenu'
 
 export function Panel({ theme }: { theme: Theme }) {
-  const [status, setStatus] = useState<Status>('loading')
-  const [error, setError] = useState<string>('')
-  const [lists, setLists] = useState<GTaskList[]>([])
-  const [wire, setWire] = useState<WireTask[]>([])
+  const api = useTasks()
   const [mode, setMode] = useState<ViewMode>('due')
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
-
-  const load = useCallback(async () => {
-    setStatus('loading')
-    try {
-      const snapshot = await send<Snapshot>({ type: 'loadAll' })
-      setLists(snapshot.lists)
-      setWire(snapshot.tasks)
-      setStatus('ready')
-    } catch (err) {
-      if (err instanceof PanelError && err.needsAuth) {
-        setStatus('signedOut')
-        return
-      }
-      setError(err instanceof Error ? err.message : String(err))
-      setStatus('error')
-    }
-  }, [])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [activeListId, setActiveListId] = useState('')
+  const [showCompleted, setShowCompleted] = useState(false)
 
   useEffect(() => {
     void loadViewState().then((state) => {
       setMode(state.mode)
       setCollapsed(new Set(state.collapsed))
     })
-    void load()
-  }, [load])
+  }, [])
 
-  const persist = useCallback((next: { mode?: ViewMode; collapsed?: ReadonlySet<string> }) => {
-    void saveViewState({
-      mode: next.mode ?? mode,
-      collapsed: [...(next.collapsed ?? collapsed)],
-    })
-  }, [mode, collapsed])
+  // Default the add field to the first list once lists arrive.
+  useEffect(() => {
+    if (!activeListId && api.lists[0]) setActiveListId(api.lists[0].id)
+  }, [api.lists, activeListId])
 
-  const toggleCollapse = useCallback((id: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      persist({ collapsed: next })
-      return next
-    })
-  }, [persist])
+  const persist = useCallback(
+    (next: { mode?: ViewMode; collapsed?: ReadonlySet<string> }) => {
+      void saveViewState({
+        mode: next.mode ?? mode,
+        collapsed: [...(next.collapsed ?? collapsed)],
+      })
+    },
+    [mode, collapsed],
+  )
 
-  const switchMode = useCallback((next: ViewMode) => {
-    setMode(next)
-    persist({ mode: next })
-  }, [persist])
+  const toggleCollapse = useCallback(
+    (id: string) => {
+      setCollapsed((prev) => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        persist({ collapsed: next })
+        return next
+      })
+    },
+    [persist],
+  )
 
-  // Dates are rebuilt here, on this side of the JSON boundary.
-  const { urgent, groups } = useMemo(() => {
-    const tasks = wire.map((raw) => toTask(raw, raw.listId))
-    return groupTasks(tasks, lists, mode)
-  }, [wire, lists, mode])
+  const switchMode = useCallback(
+    (next: ViewMode) => {
+      setMode(next)
+      persist({ mode: next })
+    },
+    [persist],
+  )
 
-  const signIn = useCallback(async () => {
-    try {
-      await send({ type: 'signIn' })
-      await load()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-      setStatus('error')
+  // Dates are rebuilt here, on this side of the JSON message boundary.
+  const tasks = useMemo(() => api.tasks.map((raw) => toTask(raw, raw.listId)), [api.tasks])
+  const { urgent, groups } = useMemo(
+    () => groupTasks(tasks, api.lists, mode),
+    [tasks, api.lists, mode],
+  )
+  const categories = useMemo(() => knownCategories(tasks, api.lists), [tasks, api.lists])
+  const completed = useMemo(() => buildTree(tasks.filter((t) => t.completed)), [tasks])
+
+  // A task that scrolls out of existence should not keep the editor open.
+  useEffect(() => {
+    if (selectedId && !api.tasks.some((t) => t.id === selectedId)) setSelectedId(null)
+  }, [api.tasks, selectedId])
+
+  /**
+   * Manual order is a property of a list, so dragging only makes sense when a
+   * group holds tasks from a single list. In a mixed group the handles are
+   * hidden rather than reordering something the user cannot see.
+   */
+  const singleList = (nodes: typeof urgent): boolean => {
+    const ids = new Set<string>()
+    const walk = (items: typeof urgent): void => {
+      for (const node of items) {
+        ids.add(node.listId)
+        walk(node.children)
+      }
     }
-  }, [load])
+    walk(nodes)
+    return ids.size <= 1
+  }
+
+  const tree = (nodes: typeof urgent, showCategory: boolean) => (
+    <TaskTree
+      nodes={nodes}
+      lists={api.lists}
+      categories={categories}
+      theme={theme}
+      api={api}
+      showCategory={showCategory}
+      sortable={singleList(nodes)}
+      collapsed={collapsed}
+      selectedId={selectedId}
+      onToggleCollapse={toggleCollapse}
+      onSelect={setSelectedId}
+    />
+  )
 
   return (
     <div
       style={{
-        fontFamily: 'Google Sans, Roboto, system-ui, sans-serif',
+        display: 'flex',
+        flexDirection: 'column',
         background: theme.bg,
         color: theme.text,
         padding: 12,
-        overflowY: 'auto',
         height: '100%',
         boxSizing: 'border-box',
       }}
     >
-      <Header theme={theme} mode={mode} onMode={switchMode} onRefresh={load} disabled={status !== 'ready'} />
+      <Header
+        theme={theme}
+        mode={mode}
+        onMode={switchMode}
+        onRefresh={() => void api.load()}
+        busy={api.status === 'loading'}
+      >
+        <ListMenu
+          theme={theme}
+          lists={api.lists}
+          activeListId={activeListId}
+          onCreate={(title) => void api.createList(title)}
+          onRename={(id, title) => void api.renameList(id, title)}
+          onClearCompleted={(id) => void api.clearCompleted(id)}
+        />
+      </Header>
 
-      {status === 'loading' && <Notice theme={theme}>Loading tasks…</Notice>}
+      <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+        {api.status === 'loading' && <Notice theme={theme}>Loading tasks…</Notice>}
 
-      {status === 'signedOut' && (
-        <Notice theme={theme}>
-          <div style={{ marginBottom: 8 }}>Connect your Google account to load tasks.</div>
-          <button onClick={() => void signIn()} style={buttonStyle(theme)}>
-            Sign in
-          </button>
-        </Notice>
-      )}
+        {api.status === 'signedOut' && (
+          <Notice theme={theme}>
+            <div style={{ marginBottom: 8 }}>Connect your Google account to load tasks.</div>
+            <button onClick={() => void api.signIn()} style={buttonStyle(theme)}>
+              Sign in
+            </button>
+          </Notice>
+        )}
 
-      {status === 'error' && (
-        <Notice theme={theme}>
-          <div style={{ marginBottom: 8, color: '#f28b82' }}>{error}</div>
-          <button onClick={() => void load()} style={buttonStyle(theme)}>
-            Retry
-          </button>
-        </Notice>
-      )}
+        {api.status === 'error' && !api.tasks.length && (
+          <Notice theme={theme}>
+            <div style={{ marginBottom: 8, color: '#f28b82' }}>{api.error}</div>
+            <button onClick={() => void api.load()} style={buttonStyle(theme)}>
+              Retry
+            </button>
+          </Notice>
+        )}
 
-      {status === 'ready' && (
-        <>
-          {urgent.length > 0 && (
-            <Section title="Overdue and today" theme={theme} accent>
-              <TaskTree
-                nodes={urgent}
-                lists={lists}
+        {api.status === 'ready' && (
+          <>
+            <QuickAdd
+              theme={theme}
+              lists={api.lists}
+              activeListId={activeListId}
+              onListChange={setActiveListId}
+              onAdd={(listId, title) => void api.createTask(listId, title)}
+            />
+
+            {urgent.length > 0 && (
+              <Section title="Overdue and today" theme={theme} accent>
+                {tree(urgent, true)}
+              </Section>
+            )}
+
+            {groups.map((group) => (
+              <Section key={group.key} title={group.label} theme={theme}>
+                {tree(group.nodes, mode === 'due')}
+              </Section>
+            ))}
+
+            {urgent.length === 0 && groups.length === 0 && (
+              <Notice theme={theme}>Nothing due. Nice work.</Notice>
+            )}
+
+            {completed.length > 0 && (
+              <Section
+                title={`Completed (${completed.length})`}
                 theme={theme}
-                showCategory
-                collapsed={collapsed}
-                onToggleCollapse={toggleCollapse}
-              />
-            </Section>
-          )}
+                collapsible
+                open={showCompleted}
+                onToggle={() => setShowCompleted((v) => !v)}
+              >
+                {showCompleted && tree(completed, true)}
+              </Section>
+            )}
+          </>
+        )}
+      </div>
 
-          {groups.map((group) => (
-            <Section key={group.key} title={group.label} theme={theme}>
-              <TaskTree
-                nodes={group.nodes}
-                lists={lists}
-                theme={theme}
-                showCategory={mode === 'due'}
-                collapsed={collapsed}
-                onToggleCollapse={toggleCollapse}
-              />
-            </Section>
-          ))}
-
-          {urgent.length === 0 && groups.length === 0 && (
-            <Notice theme={theme}>Nothing due. Nice work.</Notice>
-          )}
-        </>
-      )}
+      <Toast
+        theme={theme}
+        undoLabel={api.undo?.label ?? null}
+        error={api.tasks.length ? api.error : ''}
+        onUndo={() => void api.runUndo()}
+        onDismissUndo={api.dismissUndo}
+        onDismissError={api.dismissError}
+      />
     </div>
   )
 }
@@ -157,16 +215,18 @@ function Header({
   mode,
   onMode,
   onRefresh,
-  disabled,
+  busy,
+  children,
 }: {
   theme: Theme
   mode: ViewMode
   onMode: (m: ViewMode) => void
   onRefresh: () => void
-  disabled: boolean
+  busy: boolean
+  children?: React.ReactNode
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
       <strong style={{ fontSize: 13, flex: 1 }}>BetterTasks</strong>
 
       <div style={{ display: 'flex', border: `1px solid ${theme.border}`, borderRadius: 999 }}>
@@ -189,9 +249,11 @@ function Header({
         ))}
       </div>
 
+      {children}
+
       <button
         onClick={onRefresh}
-        disabled={disabled}
+        disabled={busy}
         aria-label="Refresh"
         style={{ ...buttonStyle(theme), border: 'none', padding: '3px 6px' }}
       >
@@ -205,16 +267,26 @@ function Section({
   title,
   theme,
   accent,
+  collapsible,
+  open,
+  onToggle,
   children,
 }: {
   title: string
   theme: Theme
   accent?: boolean
+  collapsible?: boolean
+  open?: boolean
+  onToggle?: () => void
   children: React.ReactNode
 }) {
   return (
     <section style={{ marginBottom: 14 }}>
       <div
+        onClick={onToggle}
+        {...(collapsible
+          ? { role: 'button', 'aria-expanded': !!open, 'aria-label': title }
+          : {})}
         style={{
           fontSize: 11,
           fontWeight: 600,
@@ -222,8 +294,10 @@ function Section({
           letterSpacing: 0.6,
           color: accent ? '#f28b82' : theme.muted,
           marginBottom: 4,
+          cursor: collapsible ? 'pointer' : 'default',
         }}
       >
+        {collapsible && <span style={{ marginRight: 4 }}>{open ? '▾' : '▸'}</span>}
         {title}
       </div>
       {children}

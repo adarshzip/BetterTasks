@@ -1,10 +1,13 @@
 import { AuthError, getToken, signOut } from '@/auth/token'
 import {
+  clearCompleted,
   createTask,
+  createTaskList,
   deleteTask,
   listEverything,
   moveTask,
   patchTask,
+  renameTaskList,
 } from '@/api/tasks'
 import type { Request, Response } from './messages'
 
@@ -60,6 +63,15 @@ async function handle(message: Request): Promise<unknown> {
         parent: message.parent,
         previous: message.previous,
       })
+
+    case 'createTaskList':
+      return createTaskList(message.title)
+
+    case 'renameTaskList':
+      return renameTaskList(message.listId, message.title)
+
+    case 'clearCompleted':
+      return clearCompleted(message.listId)
   }
 }
 
@@ -69,7 +81,17 @@ async function handle(message: Request): Promise<unknown> {
  * interactively. Used by the Phase 0 spikes; see SPIKES.md.
  */
 Object.assign(globalThis, {
-  bt: { getToken, listEverything, createTask, patchTask, deleteTask, moveTask },
+  bt: {
+    getToken,
+    listEverything,
+    createTask,
+    patchTask,
+    deleteTask,
+    moveTask,
+    createTaskList,
+    renameTaskList,
+    clearCompleted,
+  },
 })
 
 function toErrorResponse(error: unknown): Response<never> {

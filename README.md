@@ -13,17 +13,43 @@ rendering.
 
 ## Status
 
-Phase 1, read-only panel. Working today:
+Phase 2. The panel is now read-write and does not force you back to Google's
+UI for ordinary work.
 
-- Proper hanging-indent tree with connector lines and collapsible parents
-- Course pill on every row, coloured deterministically per class
-- View toggle between due date and class
-- Pinned "Overdue and today" bucket above both views
+**Working:**
+
+- Hanging-indent tree with connector lines and collapsible parents
+- Course pill per row, coloured deterministically per class
+- View toggle between due date and class, with a pinned "Overdue and today"
+  bucket above both
 - Parent progress rollup
-- Theme that follows the browser's light or dark mode
+- Add tasks and subtasks, complete and reopen, edit title and details
+- Due date and time, effort, priority, start (defer) date, repeat interval
+- Indent, outdent, move up and down
+- Move a task to another list
+- Collapsible Completed section, and clear completed
+- Create and rename lists
+- Undo on delete, complete, edit, and move
+- Optimistic updates with rollback, so nothing waits on the network
+- Theme follows the browser's light or dark mode
 
-Not yet built: writes, defer dates, recurrence, keyboard navigation, quick add,
-and the calendar layer. See the plan for the full phase breakdown.
+**Known gaps, and why:**
+
+- **No starring.** Google's star is not in the public Tasks API. Implementing
+  our own would create two things called "star" that disagree between apps.
+  Priority covers the same need.
+- **No "Deadline" or "Starred recently" sort.** Neither has any API
+  representation.
+- **No print.**
+- **Due times are ours alone.** The API discards the time component, so a time
+  set here lives in the metadata block and is invisible to Google's clients.
+  Equally, a time you set on your phone is invisible here.
+- **No list deletion.** It destroys every task in the list with no undo, and
+  Google's UI is one click away.
+
+Not yet built: keyboard navigation, natural language quick add, recurrence
+regeneration on completion, drag and drop, and the whole calendar layer. See
+the plan for the phase breakdown.
 
 ## Getting started
 

@@ -9,6 +9,9 @@ export type Request =
   | { type: 'patchTask'; listId: string; taskId: string; patch: Partial<GTask> }
   | { type: 'deleteTask'; listId: string; taskId: string }
   | { type: 'moveTask'; listId: string; taskId: string; parent?: string; previous?: string }
+  | { type: 'createTaskList'; title: string }
+  | { type: 'renameTaskList'; listId: string; title: string }
+  | { type: 'clearCompleted'; listId: string }
 
 export interface Snapshot {
   lists: GTaskList[]

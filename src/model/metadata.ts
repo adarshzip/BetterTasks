@@ -20,6 +20,12 @@ const BLOCK_RE = new RegExp(`\\n*${SENTINEL}[^\\n]*$`)
 /** `notes` caps near 8k; refuse to emit a block that would crowd it out. */
 const MAX_BLOCK_LENGTH = 512
 
+/**
+ * A metadata update. An explicit `undefined` clears a field, which is how a
+ * due time or defer date gets removed.
+ */
+export type MetaPatch = { [K in keyof TaskMeta]?: TaskMeta[K] | undefined }
+
 export interface DecodedNotes {
   /** The note with the metadata block stripped. */
   body: string
@@ -79,7 +85,7 @@ function isClockTime(v: unknown): v is string {
  * Rebuilds a `notes` value from a body and metadata. Emits no block at all when
  * the metadata is empty, so tasks we never enriched stay byte-identical.
  */
-export function encodeNotes(body: string, meta: TaskMeta): string {
+export function encodeNotes(body: string, meta: MetaPatch): string {
   const trimmed = body.replace(/\s+$/, '')
   const compact = compactMeta(meta)
 
@@ -92,7 +98,7 @@ export function encodeNotes(body: string, meta: TaskMeta): string {
 }
 
 /** Drops undefined and out-of-range values so we never write junk back. */
-function compactMeta(meta: TaskMeta): TaskMeta {
+function compactMeta(meta: MetaPatch): TaskMeta {
   const out: TaskMeta = {}
   if (meta.cat) out.cat = meta.cat
   if (isPositiveInt(meta.eff)) out.eff = meta.eff
@@ -103,8 +109,7 @@ function compactMeta(meta: TaskMeta): TaskMeta {
   return out
 }
 
-/** Convenience for updating metadata without touching the body. */
-export function withMeta(notes: string | undefined, patch: Partial<TaskMeta>): string {
+export function withMeta(notes: string | undefined, patch: MetaPatch): string {
   const { body, meta } = decodeNotes(notes)
   return encodeNotes(body, { ...meta, ...patch })
 }

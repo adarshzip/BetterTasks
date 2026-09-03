@@ -2,4 +2,6 @@ node_modules/
 dist/
 extension.local.json
 *.pem
+*.key
+credentials*.json
 .DS_Store

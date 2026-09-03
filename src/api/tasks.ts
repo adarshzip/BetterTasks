@@ -37,6 +37,27 @@ export async function listEverything(): Promise<{ lists: GTaskList[]; tasks: Wir
   return { lists, tasks: perList.flat() }
 }
 
+export async function createTaskList(title: string): Promise<GTaskList> {
+  return apiFetch<GTaskList>(`${BASE}/users/@me/lists`, { method: 'POST', body: { title } })
+}
+
+export async function renameTaskList(listId: string, title: string): Promise<GTaskList> {
+  return apiFetch<GTaskList>(`${BASE}/users/@me/lists/${encodeURIComponent(listId)}`, {
+    method: 'PATCH',
+    body: { title },
+  })
+}
+
+/**
+ * Google's "delete all completed tasks". The API has no bulk endpoint for it,
+ * so this is a clear followed by a reload: `clear` hides completed tasks from
+ * the default view rather than deleting them, which matches what Google's own
+ * menu item actually does.
+ */
+export async function clearCompleted(listId: string): Promise<void> {
+  await apiFetch<void>(`${BASE}/lists/${encodeURIComponent(listId)}/clear`, { method: 'POST' })
+}
+
 export async function createTask(listId: string, task: Partial<GTask>, parent?: string): Promise<GTask> {
   return apiFetch<GTask>(`${BASE}/lists/${encodeURIComponent(listId)}/tasks`, {
     method: 'POST',

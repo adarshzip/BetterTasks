@@ -18,6 +18,20 @@ export function categoryOf(task: Task, listTitles: Map<string, string>): string 
   return task.meta.cat ?? listTitles.get(task.listId) ?? 'Other'
 }
 
+/**
+ * Every category currently in use, for the picker.
+ *
+ * A category is normally the task's list, which suits one-list-per-class. But
+ * a single list with a category tag per task works too, and is less setup, so
+ * both sources are offered together.
+ */
+export function knownCategories(tasks: Task[], lists: GTaskList[]): string[] {
+  const seen = new Set<string>()
+  for (const list of lists) if (list.title) seen.add(list.title)
+  for (const task of tasks) if (task.meta.cat) seen.add(task.meta.cat)
+  return [...seen].sort((a, b) => a.localeCompare(b))
+}
+
 /** Hidden until its defer date arrives. Keeps a month-out project out of today. */
 export function isDeferred(task: Task, now = new Date()): boolean {
   if (!task.meta.defer) return false

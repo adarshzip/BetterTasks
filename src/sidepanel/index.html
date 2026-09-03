@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BetterTasks</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #1b1b1b; color: #e3e3e3; }
+      body { font-family: 'Google Sans', Roboto, system-ui, sans-serif; }
+      #root { height: 100%; }
+      #boot { padding: 16px; font-size: 13px; line-height: 1.5; color: #9aa0a6; }
+      #boot pre { white-space: pre-wrap; word-break: break-word; color: #f28b82; }
+      @media (prefers-color-scheme: light) {
+        html, body { background: #fff; color: #202124; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <!-- Replaced by React. If this text survives, the module never ran. -->
+      <div id="boot">Starting…</div>
+    </div>
+    <script>
+      // A module that fails to parse or load leaves a blank white page with
+      // nothing in the console the user is likely to find. Surface it in the
+      // page instead. Cleared by main.tsx on a successful render.
+      (function () {
+        function show(what, detail) {
+          var boot = document.getElementById('boot')
+          if (!boot) return
+          boot.innerHTML = '<strong>' + what + '</strong><pre></pre>'
+          boot.querySelector('pre').textContent = String(detail)
+        }
+        window.addEventListener('error', function (e) {
+          show('Script error', (e.error && e.error.stack) || e.message)
+        })
+        window.addEventListener('unhandledrejection', function (e) {
+          show('Unhandled rejection', (e.reason && e.reason.stack) || e.reason)
+        })
+        setTimeout(function () {
+          var boot = document.getElementById('boot')
+          if (boot && boot.textContent === 'Starting…') {
+            show('Module never executed', 'The bundle did not load. Check the console for a CSP or 404 error.')
+          }
+        }, 3000)
+      })()
+    </script>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

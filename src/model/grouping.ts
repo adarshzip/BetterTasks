@@ -32,6 +32,33 @@ export function knownCategories(tasks: Task[], lists: GTaskList[]): string[] {
   return [...seen].sort((a, b) => a.localeCompare(b))
 }
 
+/**
+ * Resolves every node's category, with subtasks inheriting from their parent.
+ *
+ * A subtask of a MATH 458 project is MATH 458 work, so it should be findable
+ * by class and labelled as such without tagging it by hand. Resolved at
+ * display time rather than written to the task, so re-parenting a subtask or
+ * changing the parent's class updates the child with no writes.
+ */
+export function resolveCategories(
+  roots: TaskNode[],
+  listTitles: Map<string, string>,
+): Map<string, string> {
+  const resolved = new Map<string, string>()
+
+  const visit = (nodes: TaskNode[], inherited: string | null): void => {
+    for (const node of nodes) {
+      // An explicit class always wins over an inherited one.
+      const category = node.meta.cat ?? inherited ?? listTitles.get(node.listId) ?? 'Other'
+      resolved.set(node.raw.id, category)
+      visit(node.children, category)
+    }
+  }
+
+  visit(roots, null)
+  return resolved
+}
+
 /** Hidden until its defer date arrives. Keeps a month-out project out of today. */
 export function isDeferred(task: Task, now = new Date()): boolean {
   if (!task.meta.defer) return false
@@ -133,10 +160,46 @@ export function groupTasks(
   }
 
   const groups = [...buckets.entries()]
-    .map(([key, bucket]) => ({ key, label: bucket.label, nodes: bucket.nodes }))
+    .map(([key, bucket]) => ({
+      key,
+      label: bucket.label,
+      // Inside a bucket, order by when things are actually due. Manual order
+      // is only a tiebreaker: a view organised by due date that lists Friday
+      // above Monday is answering the wrong question.
+      nodes: sortByDue(bucket.nodes),
+    }))
     .sort((a, b) => (mode === 'due' ? a.key.localeCompare(b.key) : a.label.localeCompare(b.label)))
 
-  return { urgent, groups, deferred }
+  return { urgent: sortByDue(urgent), groups, deferred: sortByDue(deferred) }
+}
+
+/** Earliest due first, undated last, manual order as the tiebreaker. */
+function sortByDue(nodes: TaskNode[]): TaskNode[] {
+  return [...nodes].sort((a, b) => {
+    const aDue = earliestDue(a)
+    const bDue = earliestDue(b)
+    if (aDue && bDue && aDue.getTime() !== bDue.getTime()) {
+      return aDue.getTime() - bDue.getTime()
+    }
+    if (aDue && !bDue) return -1
+    if (!aDue && bDue) return 1
+    return a.position.localeCompare(b.position)
+  })
+}
+
+/**
+ * Matches a task against a search query, across title, notes, and class.
+ * Case-insensitive, and every term must appear somewhere.
+ */
+export function matchesQuery(task: Task, query: string, listTitles: Map<string, string>): boolean {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
+  if (terms.length === 0) return true
+
+  const haystack = [task.title, task.notes, categoryOf(task, listTitles)]
+    .join(' ')
+    .toLowerCase()
+
+  return terms.every((term) => haystack.includes(term))
 }
 
 /** A tree is urgent if anything in it is, so today's subtask surfaces the project. */

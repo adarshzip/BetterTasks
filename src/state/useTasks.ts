@@ -3,7 +3,7 @@ import type { GTask, GTaskList, WireTask } from '@/model/types'
 import type { Snapshot } from '@/background/messages'
 import { send, PanelError } from '@/lib/messaging'
 import { decodeNotes, encodeNotes, withMeta, type MetaPatch } from '@/model/metadata'
-import { encodeDue } from '@/model/dates'
+import { addInterval, encodeDue } from '@/model/dates'
 import {
   applyMutation,
   indentTarget,
@@ -57,9 +57,11 @@ export interface TasksApi {
     parent?: string,
     extras?: { due?: Date; time?: string; category?: string; eff?: number; pri?: number },
   ) => Promise<void>
+  createTasks: (listId: string, titles: string[], parent?: string) => Promise<void>
   setCompleted: (id: string, completed: boolean) => Promise<void>
   editTask: (id: string, fields: { title?: string; notes?: string }) => Promise<void>
   setDue: (id: string, date: Date | null, time?: string | null) => Promise<void>
+  snooze: (id: string, days: number) => Promise<void>
   setMeta: (id: string, patch: MetaPatch) => Promise<void>
   removeTask: (id: string) => Promise<void>
   indent: (id: string) => Promise<void>
@@ -234,6 +236,30 @@ export function useTasks(): TasksApi {
     [run, load],
   )
 
+  /**
+   * Creates several tasks in order.
+   *
+   * Sequential rather than parallel: the Tasks API rate-limits readily, and
+   * ordering matters because `position` is assigned server-side in the order
+   * the requests land.
+   */
+  const createTasks = useCallback(
+    async (listId: string, titles: string[], parent?: string) => {
+      for (const title of titles) {
+        const trimmed = title.trim()
+        if (!trimmed) continue
+        await send({
+          type: 'createTask',
+          listId,
+          task: { title: trimmed },
+          ...(parent ? { parent } : {}),
+        })
+      }
+      await load({ silent: true })
+    },
+    [load],
+  )
+
   const patch = useCallback(
     async (id: string, apiPatch: Partial<GTask>, undoLabel?: string) => {
       const task = find(id)
@@ -248,6 +274,37 @@ export function useTasks(): TasksApi {
     [run, find],
   )
 
+  /**
+   * Regenerates a recurring task on completion.
+   *
+   * The Tasks API has no concept of recurrence, so the next instance is a new
+   * task with a shifted due date. Without this, a weekly problem set is
+   * created by hand fourteen times a term.
+   */
+  const regenerate = useCallback(
+    async (id: string) => {
+      const task = find(id)
+      const { body, meta } = decodeNotes(task?.notes)
+      if (!task || !meta.rec || !task.due) return
+
+      const next = addInterval(new Date(task.due), meta.rec)
+      const { due } = encodeDue(
+        new Date(next.getUTCFullYear(), next.getUTCMonth(), next.getUTCDate()),
+        meta.time ?? null,
+      )
+
+      await send({
+        type: 'createTask',
+        listId: task.listId,
+        // The metadata carries over, so the next instance keeps its class,
+        // effort, and its own recurrence.
+        task: { title: task.title ?? '', notes: encodeNotes(body, meta), ...(due ? { due } : {}) },
+      })
+      await load({ silent: true })
+    },
+    [find, load],
+  )
+
   const setCompleted = useCallback(
     async (id: string, completed: boolean) => {
       await patch(
@@ -259,8 +316,10 @@ export function useTasks(): TasksApi {
             { status: 'needsAction', completed: undefined as unknown as string },
         completed ? 'Task completed' : 'Task reopened',
       )
+
+      if (completed) await regenerate(id)
     },
-    [patch],
+    [patch, regenerate],
   )
 
   const editTask = useCallback(
@@ -282,7 +341,7 @@ export function useTasks(): TasksApi {
     [patch, find],
   )
 
-  /** Due date and time always move together; see SPIKES.md. */
+  /** Due date and time always move together; see docs/SPIKES.md. */
   const setDue = useCallback(
     async (id: string, date: Date | null, time?: string | null) => {
       const task = find(id)
@@ -299,6 +358,26 @@ export function useTasks(): TasksApi {
       )
     },
     [patch, find],
+  )
+
+  /**
+   * Pushes a due date out by whole days, from today rather than from the
+   * existing date, so snoozing an overdue task lands in the future rather than
+   * in the past.
+   */
+  const snooze = useCallback(
+    async (id: string, days: number) => {
+      const task = find(id)
+      if (!task) return
+
+      const base = new Date()
+      base.setHours(0, 0, 0, 0)
+      base.setDate(base.getDate() + days)
+
+      const { meta } = decodeNotes(task.notes)
+      await setDue(id, base, meta.time ?? null)
+    },
+    [find, setDue],
   )
 
   const setMeta = useCallback(
@@ -499,9 +578,11 @@ export function useTasks(): TasksApi {
     dismissUndo: () => setUndo(null),
     runUndo,
     createTask,
+    createTasks,
     setCompleted,
     editTask,
     setDue,
+    snooze,
     setMeta,
     removeTask,
     indent,

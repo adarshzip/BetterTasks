@@ -14,6 +14,8 @@ const actions = (): KeyboardActions => ({
   nudge: vi.fn(),
   remove: vi.fn(),
   focusQuickAdd: vi.fn(),
+  focusSearch: vi.fn(),
+  snooze: vi.fn(),
   dismiss: vi.fn(),
   undo: vi.fn(),
 })
@@ -111,6 +113,22 @@ describe('useKeyboard', () => {
 
     press('Escape', {}, input)
     expect(input.blur).toHaveBeenCalled()
+  })
+
+  it('separates adding from searching', () => {
+    mount()
+    press('n')
+    press('/')
+    expect(api.focusQuickAdd).toHaveBeenCalledOnce()
+    expect(api.focusSearch).toHaveBeenCalledOnce()
+  })
+
+  it('snoozes by a day or a week', () => {
+    mount()
+    press('t')
+    press('w')
+    expect(api.snooze).toHaveBeenNthCalledWith(1, 1)
+    expect(api.snooze).toHaveBeenNthCalledWith(2, 7)
   })
 
   it('does nothing while disabled', () => {

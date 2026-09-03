@@ -1,3 +1,6 @@
+# Documentation is kept local rather than tracked.
+docs/
+
 node_modules/
 dist/
 extension.local.json

@@ -20,10 +20,21 @@ interface Props {
   api: TasksApi
   scheduled: boolean
   onSchedule: () => void
+  onAddSubtask: () => void
   onClose: () => void
 }
 
-export function TaskDetail({ node, lists, categories, theme, api, scheduled, onSchedule, onClose }: Props) {
+export function TaskDetail({
+  node,
+  lists,
+  categories,
+  theme,
+  api,
+  scheduled,
+  onSchedule,
+  onAddSubtask,
+  onClose,
+}: Props) {
   const id = node.raw.id
 
   // Text fields commit on blur or Enter, never per keystroke.
@@ -55,8 +66,28 @@ export function TaskDetail({ node, lists, categories, theme, api, scheduled, onS
   const canUp = neighbourFor(api.tasks, id, 'up') !== null
   const canDown = neighbourFor(api.tasks, id, 'down') !== null
 
+  /**
+   * Closes once the edit is finished: Enter, or focus leaving the editor
+   * entirely. Tabbing between fields inside it must not close it, which is why
+   * this checks where focus actually went rather than just reacting to blur.
+   */
+  const handleBlur = (event: React.FocusEvent<HTMLDivElement>): void => {
+    const next = event.relatedTarget as Node | null
+    if (!next || !event.currentTarget.contains(next)) onClose()
+  }
+
   return (
     <div
+      onBlur={handleBlur}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' && !event.shiftKey && event.target instanceof HTMLInputElement) {
+          // The field's own handler commits on blur; closing after that lands
+          // the edit and dismisses the editor in one keystroke.
+          event.currentTarget.focus()
+          onClose()
+        }
+      }}
+      tabIndex={-1}
       style={{
         margin: '0 8px 8px',
         padding: 10,
@@ -92,6 +123,19 @@ export function TaskDetail({ node, lists, categories, theme, api, scheduled, onS
           disabled={!node.due}
           style={{ ...inputStyle(theme), width: 100 }}
         />
+      </Field>
+
+      <Field label="" theme={theme}>
+        {/* Pushing a deadline is frequent enough that a date picker is friction. */}
+        <Action theme={theme} onClick={() => void api.snooze(id, 1)} title="Due tomorrow">
+          Tomorrow
+        </Action>
+        <Action theme={theme} onClick={() => void api.snooze(id, 7)} title="Due next week">
+          Next week
+        </Action>
+        <Action theme={theme} onClick={() => void api.setDue(id, null)} title="Clear due date">
+          No date
+        </Action>
       </Field>
 
       <Field label="Class" theme={theme}>
@@ -157,9 +201,18 @@ export function TaskDetail({ node, lists, categories, theme, api, scheduled, onS
           aria-label="Show from"
           style={{ ...inputStyle(theme), flex: 1 }}
         />
-        {/* Repeat is intentionally absent: the model supports it, but nothing
-            regenerates a task on completion yet, so the control would lie.
-            Restore this once useTasks handles recurrence. */}
+        <select
+          aria-label="Repeat"
+          value={node.meta.rec ?? ''}
+          onChange={(e) => void api.setMeta(id, { rec: e.target.value || undefined })}
+          style={{ ...inputStyle(theme), width: 110 }}
+        >
+          <option value="">No repeat</option>
+          <option value="1d">Daily</option>
+          <option value="1w">Weekly</option>
+          <option value="2w">Fortnightly</option>
+          <option value="1m">Monthly</option>
+        </select>
       </Field>
 
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
@@ -191,13 +244,7 @@ export function TaskDetail({ node, lists, categories, theme, api, scheduled, onS
         <Action theme={theme} onClick={onSchedule} title="Schedule work time">
           {scheduled ? 'Reschedule' : 'Schedule'}
         </Action>
-        <Action
-          theme={theme}
-          onClick={() => {
-            void api.createTask(node.listId, 'New subtask', id)
-          }}
-          title="Add subtask"
-        >
+        <Action theme={theme} onClick={onAddSubtask} title="Add subtask">
           + Subtask
         </Action>
         <Action

@@ -11,6 +11,9 @@ import { formatEffort } from './TaskRow'
  * effort, and priority in one line. A preview under the field shows what was
  * understood, so the syntax is discoverable without documentation and a
  * mis-parse is visible before the task is created rather than after.
+ *
+ * Tab nests the new task under the cursor, which is the fast path for breaking
+ * a project down without first clicking into it.
  */
 interface Props {
   theme: Theme
@@ -18,8 +21,10 @@ interface Props {
   categories: string[]
   activeListId: string
   onListChange: (listId: string) => void
-  onAdd: (listId: string, parsed: ParsedEntry) => void
+  onAdd: (listId: string, parsed: ParsedEntry, parent?: string) => void
   colourOf: (category: string) => string
+  /** The task a new entry would nest under, or null when nesting is impossible. */
+  nestTarget: { id: string; title: string } | null
 }
 
 export function QuickAdd({
@@ -30,13 +35,19 @@ export function QuickAdd({
   onListChange,
   onAdd,
   colourOf,
+  nestTarget,
 }: Props) {
   const [text, setText] = useState('')
+  const [nesting, setNesting] = useState(false)
+
+  // Nesting cannot outlive the target: moving the cursor elsewhere, or onto a
+  // task that cannot take children, silently drops it.
+  const active = nesting && nestTarget !== null
   const parsed = useMemo(() => (text.trim() ? parseEntry(text, categories) : null), [text, categories])
 
   const submit = (): void => {
     if (!parsed?.title) return
-    onAdd(activeListId, parsed)
+    onAdd(activeListId, parsed, active ? nestTarget.id : undefined)
     setText('')
   }
 
@@ -51,7 +62,18 @@ export function QuickAdd({
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') submit()
+
+            if (e.key === 'Tab' && nestTarget) {
+              // Tab would otherwise move focus out of the field.
+              e.preventDefault()
+              setNesting(!e.shiftKey)
+            }
+
             if (e.key === 'Escape') {
+              if (active) {
+                setNesting(false)
+                return
+              }
               setText('')
               e.currentTarget.blur()
             }
@@ -95,6 +117,21 @@ export function QuickAdd({
           </select>
         )}
       </div>
+
+      {active && (
+        <div
+          aria-label="Nesting target"
+          style={{ fontSize: 11, color: theme.accent, padding: '5px 10px 0' }}
+        >
+          ↳ subtask of “{nestTarget.title || 'untitled'}” · Tab again or Esc to cancel
+        </div>
+      )}
+
+      {!active && nestTarget && text.trim() && (
+        <div style={{ fontSize: 11, color: theme.muted, padding: '5px 10px 0' }}>
+          Tab to add under “{nestTarget.title || 'untitled'}”
+        </div>
+      )}
 
       {parsed && <Preview parsed={parsed} theme={theme} colourOf={colourOf} />}
     </div>

@@ -24,7 +24,7 @@ declare const __OAUTH_CLIENT_ID__: string
 /**
  * `calendar.events` covers reading and writing events and nothing else:
  * colours, the calendar list, free/busy, and creating a calendar all fail on
- * scopes (SPIKES.md). The broader `calendar` scope is required for those.
+ * scopes (docs/SPIKES.md). The broader `calendar` scope is required for those.
  */
 const SCOPES = [
   'https://www.googleapis.com/auth/tasks',
@@ -206,7 +206,7 @@ export async function signOut(): Promise<void> {
   }
 }
 
-/** Exposed for the redirect URI shown in SETUP.md. */
+/** Exposed for the redirect URI shown in docs/SETUP.md. */
 export function redirectUri(): string {
   return chrome.identity.getRedirectURL()
 }

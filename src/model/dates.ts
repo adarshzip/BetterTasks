@@ -4,7 +4,7 @@ import type { TaskMeta } from './types'
  * Due date encoding.
  *
  * The Tasks API stores `due` as a calendar date at UTC midnight and discards
- * any time component (SPIKES.md). So a due date is really two values: the date
+ * any time component (docs/SPIKES.md). So a due date is really two values: the date
  * goes to Google, and the time of day, if any, goes in our metadata block.
  *
  * These must always be written together. Setting one without the other loses

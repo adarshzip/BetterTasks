@@ -14,6 +14,21 @@ import { COURSE, courseCodeOf } from './courses'
  * parser runs, because chrono will happily read "458" as a day of the month.
  */
 
+/**
+ * Splits pasted text into task titles.
+ *
+ * Lists get pasted from notes, syllabi, and recipes, and they arrive with
+ * whatever bullet style the source used. Stripping those is the difference
+ * between ten clean subtasks and ten titles beginning with a hyphen.
+ */
+export function splitPastedLines(text: string, max = 50): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*(?:[-*•‣◦]|\d+[.)])\s+/, '').trim())
+    .filter(Boolean)
+    .slice(0, max)
+}
+
 export interface ParsedEntry {
   title: string
   category?: string

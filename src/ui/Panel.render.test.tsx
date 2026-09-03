@@ -32,6 +32,15 @@ const SNAPSHOT = {
     },
     { id: 'c', title: 'Step one', listId: 'l1', parent: 'p', due: '2026-09-04T00:00:00.000Z', position: '01', status: 'needsAction' },
     { id: 'n', title: 'No date', listId: 'l1', position: '02', status: 'needsAction' },
+    {
+      id: 'r',
+      title: 'Repeating',
+      listId: 'l1',
+      due: '2026-09-04T00:00:00.000Z',
+      position: '03',
+      status: 'needsAction',
+      notes: '⟦bt⟧{"cat":"MATH 458","rec":"1w"}',
+    },
   ],
 }
 
@@ -274,10 +283,24 @@ describe('Panel interactions', () => {
     expect(sent.filter((r) => r.type === 'createTask')).toHaveLength(0)
   })
 
-  it('no longer offers a repeat control, since nothing regenerates tasks yet', async () => {
+  it('offers a repeat control now that completion regenerates tasks', async () => {
     const container = await mount()
     await click(container.querySelector('div[style*="cursor: pointer"]'))
-    expect(byLabel(container, 'Repeat')).toBeFalsy()
+    expect(byLabel(container, 'Repeat')).toBeTruthy()
+  })
+
+  // The API has no recurrence, so the next instance is a new task with a
+  // shifted due date, carrying its metadata across.
+  it('creates the next instance when a repeating task is completed', async () => {
+    const container = await mount()
+    await click(byLabel(container, 'Complete Repeating'))
+
+    const created = sent.find((r) => r.type === 'createTask')
+    expect(created).toBeTruthy()
+    const body = JSON.stringify(created)
+    // Weekly from 4 Sep lands on 11 Sep, and the class carries over.
+    expect(body).toContain('2026-09-11')
+    expect(body).toContain('MATH 458')
   })
 
   // A native date field fires change on every segment edit, so paging from
@@ -364,6 +387,153 @@ describe('Panel interactions', () => {
   it('shows no block when the calendar reports none', async () => {
     const container = await mount()
     expect(container.textContent).not.toContain('▦')
+  })
+
+  it('filters the list by search', async () => {
+    const container = await mount()
+    expect(container.textContent).toContain('No date')
+
+    await typeInto(byLabel(container, 'Search tasks') as HTMLInputElement, 'project')
+    expect(container.textContent).toContain('Project')
+    expect(container.textContent).not.toContain('No date')
+  })
+
+  it('searches notes and class as well as titles', async () => {
+    const container = await mount()
+    await typeInto(byLabel(container, 'Search tasks') as HTMLInputElement, 'math')
+    expect(container.textContent).toContain('Project')
+  })
+
+  it('selects a range with shift-click and acts on all of it', async () => {
+    const container = await mount()
+    const rows = [...container.querySelectorAll('div[style*="cursor: pointer"]')]
+
+    await click(rows[0])
+    await act(async () => {
+      rows[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }))
+    })
+
+    const bar = container.querySelector('[role="toolbar"]')
+    expect(bar?.textContent).toContain('selected')
+
+    await click(byLabel(container, 'Selection due tomorrow'))
+    // One write per selected task, not one for the whole selection.
+    expect(sent.filter((r) => r.type === 'patchTask').length).toBeGreaterThan(1)
+  })
+
+  it('closes the editor when focus leaves it', async () => {
+    const container = await mount()
+    await click(container.querySelector('div[style*="cursor: pointer"]'))
+    expect(byLabel(container, 'Details')).toBeTruthy()
+
+    const editor = byLabel(container, 'Title')!.parentElement!
+    await act(async () => {
+      editor.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+
+    expect(byLabel(container, 'Details')).toBeFalsy()
+  })
+
+  // A subtask of a MATH 458 project is MATH 458 work, whether or not anyone
+  // tagged it.
+  it('inherits the parent class for a subtask', async () => {
+    const container = await mount()
+    await click(byLabel(container, 'Group by class'))
+    // Both rows sit under the inherited class, not the default list name.
+    expect(container.textContent).toContain('MATH 458')
+    expect(container.textContent).toContain('Step one')
+  })
+
+  it('does not repeat the parent pill on a subtask', async () => {
+    const container = await mount()
+
+    const rowOf = (title: string) =>
+      [...container.querySelectorAll('div[style*="cursor: pointer"]')].find((el) =>
+        el.textContent?.includes(title),
+      )
+
+    // The parent carries the pill; the indent already says the child belongs,
+    // so repeating it on the child is noise.
+    expect(rowOf('Project')?.textContent).toContain('MATH 458')
+    expect(rowOf('Step one')?.textContent).not.toContain('MATH 458')
+  })
+
+  it('keeps the subtask field open for the next one', async () => {
+    const container = await mount()
+    await click(container.querySelector('div[style*="cursor: pointer"]'))
+    await click(byLabel(container, 'Add subtask'))
+
+    const field = byLabel(container, 'New subtask') as HTMLInputElement
+    expect(field).toBeTruthy()
+
+    await typeInto(field, 'read chapter 4')
+    await act(async () => {
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+
+    expect(sent.some((r) => r.type === 'createTask')).toBe(true)
+    // Still open, and cleared, so the next subtask is just more typing.
+    expect(byLabel(container, 'New subtask')).toBeTruthy()
+    expect((byLabel(container, 'New subtask') as HTMLInputElement).value).toBe('')
+  })
+
+  it('closes the subtask field on an empty Enter', async () => {
+    const container = await mount()
+    await click(container.querySelector('div[style*="cursor: pointer"]'))
+    await click(byLabel(container, 'Add subtask'))
+
+    const field = byLabel(container, 'New subtask') as HTMLInputElement
+    await act(async () => {
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+
+    expect(byLabel(container, 'New subtask')).toBeFalsy()
+    expect(sent.some((r) => r.type === 'createTask')).toBe(false)
+  })
+
+  it('creates one subtask per line when a list is pasted', async () => {
+    const container = await mount()
+    await click(container.querySelector('div[style*="cursor: pointer"]'))
+    await click(byLabel(container, 'Add subtask'))
+
+    const field = byLabel(container, 'New subtask') as HTMLInputElement
+    await act(async () => {
+      const event = new Event('paste', { bubbles: true, cancelable: true }) as Event & {
+        clipboardData: { getData: () => string }
+      }
+      event.clipboardData = { getData: () => '- read ch 4\n- write notes\n\n- revise' }
+      field.dispatchEvent(event)
+    })
+
+    const created = sent.filter((r) => r.type === 'createTask')
+    expect(created).toHaveLength(3)
+    // Bullets stripped, blank lines dropped, all nested under the parent.
+    expect(JSON.stringify(created[0])).toContain('read ch 4')
+    expect(created.every((r) => r.parent === 'p')).toBe(true)
+  })
+
+  it('nests a quick-add entry under the cursor when Tab is pressed', async () => {
+    const container = await mount()
+
+    // Move the cursor onto the first task, then compose an entry.
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true }))
+    })
+
+    const field = byLabel(container, 'Add a task') as HTMLInputElement
+    await typeInto(field, 'read chapter 4')
+    await act(async () => {
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    })
+
+    expect(byLabel(container, 'Nesting target')).toBeTruthy()
+
+    await act(async () => {
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+
+    const created = sent.find((r) => r.type === 'createTask')
+    expect(created).toMatchObject({ parent: 'p' })
   })
 
   it('shows drag handles when a group holds one list', async () => {

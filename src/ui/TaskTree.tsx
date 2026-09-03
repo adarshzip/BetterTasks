@@ -14,12 +14,13 @@ import type { GTaskList, TaskNode } from '@/model/types'
 import type { Theme } from './theme'
 import type { TasksApi } from '@/state/useTasks'
 import { flattenTree } from '@/model/tree'
-import { categoryOf } from '@/model/grouping'
+import { categoryOf, resolveCategories } from '@/model/grouping'
 import { projectDrop, type Row } from '@/state/projection'
 import { TaskRow, INDENT } from './TaskRow'
 import { TaskDetail } from './TaskDetail'
 import { SortableRow } from './SortableRow'
 import { ScheduleDialog } from './ScheduleDialog'
+import { SubtaskComposer } from './SubtaskComposer'
 import type { Interval } from '@/model/schedule'
 
 interface Props {
@@ -35,6 +36,7 @@ interface Props {
   cursorId: string | null
   busy: Interval[]
   blocks: Map<string, { eventId: string; start: Date; end: Date }>
+  atRisk: (node: TaskNode) => boolean
   schedulingId: string | null
   onStartScheduling: (id: string | null) => void
   onSchedule: (node: TaskNode, slot: Interval) => void
@@ -42,7 +44,8 @@ interface Props {
   /** Reordering is only meaningful inside one list; disabled in mixed groups. */
   sortable: boolean
   onToggleCollapse: (id: string) => void
-  onSelect: (id: string | null) => void
+  onSelect: (id: string | null, range?: boolean) => void
+  selection: ReadonlySet<string>
 }
 
 export function TaskTree({
@@ -58,6 +61,7 @@ export function TaskTree({
   cursorId,
   busy,
   blocks,
+  atRisk,
   schedulingId,
   onStartScheduling,
   onSchedule,
@@ -65,9 +69,47 @@ export function TaskTree({
   sortable,
   onToggleCollapse,
   onSelect,
+  selection,
 }: Props) {
+  // Which task is currently accepting inline subtasks.
+  const [composingUnder, setComposingUnder] = useState<string | null>(null)
+
   const listTitles = new Map(lists.map((l) => [l.id, l.title ?? 'Untitled']))
   const rows = flattenTree(nodes, collapsed)
+
+  // Subtasks inherit their parent's class unless they carry their own.
+  const resolved = resolveCategories(nodes, listTitles)
+  const categoryFor = (node: TaskNode): string =>
+    resolved.get(node.raw.id) ?? categoryOf(node, listTitles)
+
+  /**
+   * The row after which the composer belongs: the parent's last descendant, or
+   * the parent itself when it has none. Anything else would put new subtasks
+   * above the existing ones.
+   */
+  const composerAnchor = (): string | null => {
+    if (!composingUnder) return null
+    const index = rows.findIndex((r) => r.raw.id === composingUnder)
+    if (index === -1) return null
+
+    const parentDepth = rows[index]!.depth
+    let last = index
+    while (rows[last + 1] && rows[last + 1]!.depth > parentDepth) last += 1
+    return rows[last]!.raw.id
+  }
+
+  const anchorId = composerAnchor()
+
+  /**
+   * A child showing the same pill as its parent is noise: the indent already
+   * says it belongs to that project. Only show a child's pill when it differs.
+   */
+  const showPillFor = (node: TaskNode): boolean => {
+    if (!showCategory) return false
+    if (!node.parent) return true
+    const parent = rows.find((r) => r.raw.id === node.parent)
+    return !parent || categoryFor(parent) !== categoryFor(node)
+  }
 
   // Horizontal drag distance decides nesting depth, so it has to be tracked
   // during the drag rather than read at the end.
@@ -113,17 +155,19 @@ export function TaskTree({
       <TaskRow
         node={node}
         theme={theme}
-        category={categoryOf(node, listTitles)}
-        categoryColour={colourOf(categoryOf(node, listTitles))}
+        category={categoryFor(node)}
+        categoryColour={colourOf(categoryFor(node))}
         block={blocks.get(node.raw.id) ?? null}
-        showCategory={showCategory}
+        atRisk={atRisk(node)}
+        showCategory={showPillFor(node)}
         collapsed={collapsed.has(node.raw.id)}
         selected={selected}
+        inSelection={selection.has(node.raw.id)}
         focused={cursorId === node.raw.id}
         dragging={draggingId === node.raw.id}
         onToggleCollapse={onToggleCollapse}
         onToggleComplete={(id, completed) => onComplete(id, completed)}
-        onSelect={(id) => onSelect(selected ? null : id)}
+        onSelect={(id, range) => onSelect(range ? id : selected ? null : id, range)}
       />
     )
 
@@ -145,8 +189,19 @@ export function TaskTree({
             theme={theme}
             api={api}
             scheduled={blocks.has(node.raw.id)}
+            onAddSubtask={() => setComposingUnder(node.raw.id)}
             onSchedule={() => onStartScheduling(node.raw.id)}
             onClose={() => onSelect(null)}
+          />
+        )}
+
+        {anchorId === node.raw.id && composingUnder && (
+          <SubtaskComposer
+            theme={theme}
+            depth={(rows.find((r) => r.raw.id === composingUnder)?.depth ?? 0) + 1}
+            onAdd={(title) => void api.createTask(node.listId, title, composingUnder)}
+            onAddMany={(titles) => void api.createTasks(node.listId, titles, composingUnder)}
+            onClose={() => setComposingUnder(null)}
           />
         )}
 

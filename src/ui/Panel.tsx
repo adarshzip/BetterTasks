@@ -1,14 +1,16 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import type { Theme } from './theme'
-import { groupTasks, knownCategories, lingers, type ViewMode } from '@/model/grouping'
+import { groupTasks, knownCategories, lingers, matchesQuery, type ViewMode } from '@/model/grouping'
 import { buildTree, toTask } from '@/model/tree'
 import { useTasks } from '@/state/useTasks'
 import { useCalendar } from '@/state/useCalendar'
+import { isAtRisk } from '@/model/schedule'
 import { loadViewState, saveViewState } from '@/state/store'
 import { TaskTree } from './TaskTree'
 import { QuickAdd } from './QuickAdd'
 import { Toast } from './Toast'
 import { ListMenu } from './ListMenu'
+import { BulkBar } from './BulkBar'
 import { useKeyboard, SHORTCUTS } from './useKeyboard'
 import { flattenTree } from '@/model/tree'
 
@@ -26,6 +28,8 @@ export function Panel({ theme }: { theme: Theme }) {
   const [showCompleted, setShowCompleted] = useState(false)
   const [showDeferred, setShowDeferred] = useState(false)
   const [schedulingId, setSchedulingId] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [selection, setSelection] = useState<ReadonlySet<string>>(new Set())
 
   useEffect(() => {
     void loadViewState().then((state) => {
@@ -72,9 +76,15 @@ export function Panel({ theme }: { theme: Theme }) {
 
   // Dates are rebuilt here, on this side of the JSON message boundary.
   const tasks = useMemo(() => api.tasks.map((raw) => toTask(raw, raw.listId)), [api.tasks])
+  const visible = useMemo(() => {
+    if (!query.trim()) return tasks
+    const titles = new Map(api.lists.map((l) => [l.id, l.title ?? 'Untitled']))
+    return tasks.filter((t) => matchesQuery(t, query, titles))
+  }, [tasks, query, api.lists])
+
   const { urgent, groups, deferred } = useMemo(
-    () => groupTasks(tasks, api.lists, mode),
-    [tasks, api.lists, mode],
+    () => groupTasks(visible, api.lists, mode),
+    [visible, api.lists, mode],
   )
   const categories = useMemo(() => {
     const fromTasks = knownCategories(tasks, api.lists)
@@ -124,6 +134,8 @@ export function Panel({ theme }: { theme: Theme }) {
         nudge: (direction: 'up' | 'down') => cursor && void api.nudge(cursor, direction),
         remove: () => cursor && void api.removeTask(cursor),
         focusQuickAdd: () => document.getElementById('bt-quickadd')?.focus(),
+        focusSearch: () => document.getElementById('bt-search')?.focus(),
+        snooze: (days: number) => cursor && void api.snooze(cursor, days),
         dismiss: () => setSelectedId(null),
         undo: () => void api.runUndo(),
       }),
@@ -184,6 +196,64 @@ export function Panel({ theme }: { theme: Theme }) {
     [api, calendar],
   )
 
+  /**
+   * Flags a task that needs more time than remains free before it is due. This
+   * is the one thing the panel can say that no task app without calendar
+   * access can, so it is worth a marker on the row.
+   */
+  const atRisk = useCallback(
+    (node: (typeof urgent)[number]): boolean => {
+      if (node.completed || !calendar.busy.length) return false
+      return isAtRisk(
+        { due: node.due, ...(node.meta.eff ? { minutes: node.meta.eff } : {}) },
+        { now: new Date(), busy: calendar.busy },
+      )
+    },
+    [calendar.busy],
+  )
+
+  /**
+   * Applies an action across the selection, one request at a time.
+   *
+   * Sequential rather than parallel on purpose: the Tasks API rate-limits
+   * readily, and thirty simultaneous writes is exactly the shape that trips it.
+   */
+  const applyToSelection = useCallback(
+    async (action: (id: string) => Promise<void>) => {
+      for (const id of selection) await action(id)
+      setSelection(new Set())
+    },
+    [selection],
+  )
+
+  /**
+   * What a new quick-add entry would nest under.
+   *
+   * Google allows one level, so a subtask cannot take children. When the
+   * cursor is already on a subtask, the sensible target is its parent, which
+   * makes Tab add a sibling rather than doing nothing.
+   */
+  const nestTarget = useMemo((): { id: string; title: string } | null => {
+    if (!cursor) return null
+    const all = [...urgent, ...groups.flatMap((g) => g.nodes)]
+
+    const find = (nodes: typeof urgent): (typeof urgent)[number] | null => {
+      for (const node of nodes) {
+        if (node.raw.id === cursor) return node
+        const child = find(node.children)
+        if (child) return child
+      }
+      return null
+    }
+
+    const node = find(all)
+    if (!node) return null
+    if (!node.parent) return { id: node.raw.id, title: node.title }
+
+    const parent = all.find((n) => n.raw.id === node.parent)
+    return parent ? { id: parent.raw.id, title: parent.title } : null
+  }, [cursor, urgent, groups])
+
   const tree = (nodes: typeof urgent, showCategory: boolean) => (
     <TaskTree
       nodes={nodes}
@@ -196,6 +266,7 @@ export function Panel({ theme }: { theme: Theme }) {
       cursorId={cursor}
       busy={calendar.busy}
       blocks={calendar.blocks}
+      atRisk={atRisk}
       schedulingId={schedulingId}
       onStartScheduling={setSchedulingId}
       onSchedule={scheduleTask}
@@ -204,10 +275,17 @@ export function Panel({ theme }: { theme: Theme }) {
       collapsed={collapsed}
       selectedId={selectedId}
       onToggleCollapse={toggleCollapse}
-      onSelect={(id) => {
+      onSelect={(id, range) => {
+        // Shift-click extends a selection instead of opening the editor.
+        if (range && id) {
+          setSelection((prev) => extendSelection(prev, visibleIds, cursor, id))
+          setCursorId(id)
+          return
+        }
         setSelectedId(id)
         if (id) setCursorId(id)
       }}
+      selection={selection}
     />
   )
 
@@ -274,15 +352,29 @@ export function Panel({ theme }: { theme: Theme }) {
 
         {api.status === 'ready' && (
           <>
+            {selection.size > 0 && (
+              <BulkBar
+                theme={theme}
+                count={selection.size}
+                categories={categories}
+                onSetCategory={(category) => void applyToSelection((id) => api.setMeta(id, { cat: category }))}
+                onSnooze={(days) => void applyToSelection((id) => api.snooze(id, days))}
+                onClear={() => setSelection(new Set())}
+              />
+            )}
+
+            <SearchBox theme={theme} value={query} onChange={setQuery} />
+
             <QuickAdd
               theme={theme}
               lists={api.lists}
               activeListId={activeListId}
               categories={categories}
               colourOf={calendar.colourOf}
+              nestTarget={nestTarget}
               onListChange={setActiveListId}
-              onAdd={(listId, parsed) =>
-                void api.createTask(listId, parsed.title, undefined, {
+              onAdd={(listId, parsed, parent) =>
+                void api.createTask(listId, parsed.title, parent, {
                   ...(parsed.due ? { due: parsed.due } : {}),
                   ...(parsed.time ? { time: parsed.time } : {}),
                   ...(parsed.category ? { category: parsed.category } : {}),
@@ -466,6 +558,86 @@ function completedTitle(known: number, loaded: boolean, loading: boolean): strin
   if (loading) return 'Completed (loading…)'
   if (loaded) return `Completed (${known})`
   return known > 0 ? `Completed (${known}+)` : 'Completed'
+}
+
+/** Selects everything between the cursor and the clicked row, inclusive. */
+function extendSelection(
+  current: ReadonlySet<string>,
+  order: string[],
+  from: string | null,
+  to: string,
+): Set<string> {
+  const next = new Set(current)
+  const start = from ? order.indexOf(from) : -1
+  const end = order.indexOf(to)
+
+  if (start === -1 || end === -1) {
+    // No anchor to extend from, so treat it as toggling one row.
+    if (next.has(to)) next.delete(to)
+    else next.add(to)
+    return next
+  }
+
+  for (let i = Math.min(start, end); i <= Math.max(start, end); i++) {
+    const id = order[i]
+    if (id) next.add(id)
+  }
+  return next
+}
+
+function SearchBox({
+  theme,
+  value,
+  onChange,
+}: {
+  theme: Theme
+  value: string
+  onChange: (value: string) => void
+}) {
+  return (
+    <div style={{ position: 'relative', marginBottom: 8 }}>
+      <input
+        id="bt-search"
+        value={value}
+        aria-label="Search tasks"
+        placeholder="Search"
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            onChange('')
+            e.currentTarget.blur()
+          }
+        }}
+        style={{
+          all: 'unset',
+          boxSizing: 'border-box',
+          width: '100%',
+          fontSize: 12,
+          padding: '5px 10px',
+          borderRadius: 6,
+          border: `1px solid ${theme.border}`,
+          color: theme.text,
+        }}
+      />
+      {value && (
+        <button
+          aria-label="Clear search"
+          onClick={() => onChange('')}
+          style={{
+            all: 'unset',
+            cursor: 'pointer',
+            position: 'absolute',
+            insetInlineEnd: 8,
+            top: 4,
+            color: theme.muted,
+            fontSize: 12,
+          }}
+        >
+          ✕
+        </button>
+      )}
+    </div>
+  )
 }
 
 function Shortcuts({ theme }: { theme: Theme }) {

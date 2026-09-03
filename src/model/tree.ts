@@ -31,7 +31,7 @@ export function toTask(raw: GTask, listId: string): Task {
 
 /**
  * Due values are calendar dates, not instants. The API returns them as UTC
- * midnight and discards any time component (confirmed in SPIKES.md), so
+ * midnight and discards any time component (confirmed in docs/SPIKES.md), so
  * reading one directly in a timezone behind UTC lands on the previous
  * evening: a task due Sep 4 displays as Sep 3.
  *

@@ -27,6 +27,17 @@ chrome.runtime.onInstalled.addListener(() => {
     .catch((error: unknown) => console.error('[bettertasks] side panel setup failed', error))
 })
 
+/**
+ * The panel is available on every tab, and stays open until dismissed.
+ *
+ * Scoping it to calendar.google.com with per-tab `sidePanel.setOptions` was
+ * tried and reverted. Disabling a tab does close the panel, but Edge does not
+ * restore it when the tab is enabled again, so leaving Calendar closed the
+ * panel for good and reopening meant a trip to the toolbar. Since
+ * `sidePanel.open` requires a user gesture, nothing can reopen it
+ * automatically, which made auto-close a worse trade than always-available.
+ */
+
 chrome.runtime.onMessage.addListener(
   (message: Request, _sender, sendResponse: (r: Response<unknown>) => void) => {
     handle(message)
@@ -98,7 +109,7 @@ async function handle(message: Request): Promise<unknown> {
 /**
  * Debug handle for the service worker console. Dynamic import() is banned in
  * service workers by spec, so there is no other way to reach these functions
- * interactively. Used by the Phase 0 spikes; see SPIKES.md.
+ * interactively. Used by the Phase 0 spikes; see docs/SPIKES.md.
  */
 Object.assign(globalThis, {
   bt: {
@@ -113,7 +124,7 @@ Object.assign(globalThis, {
     renameTaskList,
     clearCompleted,
     // Exposed for Spike 3, which has to run before any calendar feature is
-    // built. See SPIKES.md.
+    // built. See docs/SPIKES.md.
     calendar,
   },
 })

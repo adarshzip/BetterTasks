@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { TaskNode } from '@/model/types'
 import type { Theme } from './theme'
 import { progressOf } from '@/model/tree'
@@ -12,14 +13,17 @@ interface Props {
   categoryColour: string
   /** Live work block from the calendar, or null when not scheduled. */
   block: { start: Date; end: Date } | null
+  /** True when the task needs more time than remains free before it is due. */
+  atRisk: boolean
   showCategory: boolean
   collapsed: boolean
   selected: boolean
+  inSelection: boolean
   focused: boolean
   dragging: boolean
   onToggleCollapse: (id: string) => void
   onToggleComplete: (id: string, completed: boolean) => void
-  onSelect: (id: string) => void
+  onSelect: (id: string, range: boolean) => void
 }
 
 export function TaskRow({
@@ -28,21 +32,33 @@ export function TaskRow({
   category,
   categoryColour,
   block,
+  atRisk,
   showCategory,
   collapsed,
   selected,
+  inSelection,
   focused,
   dragging,
   onToggleCollapse,
   onToggleComplete,
   onSelect,
 }: Props) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  // Without this the cursor walks off-screen and keyboard navigation is
+  // unusable past the first screenful. Optional-called because not every
+  // environment implements it, and a missing scroll must not break the row.
+  useEffect(() => {
+    if (focused) ref.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [focused])
+
   const progress = progressOf(node)
   const hasChildren = node.children.length > 0
   const overdue = node.due !== null && !node.completed && node.due < new Date()
 
   return (
     <div
+      ref={ref}
       style={{
         display: 'flex',
         alignItems: 'flex-start',
@@ -52,7 +68,7 @@ export function TaskRow({
         paddingInlineStart: 8 + node.depth * INDENT,
         borderRadius: 6,
         position: 'relative',
-        background: selected ? theme.surface : 'transparent',
+        background: inSelection ? `${theme.accent}22` : selected ? theme.surface : 'transparent',
         outline: dragging
           ? `1px dashed ${theme.accent}`
           : focused
@@ -105,7 +121,7 @@ export function TaskRow({
       </button>
 
       <div
-        onClick={() => onSelect(node.raw.id)}
+        onClick={(event) => onSelect(node.raw.id, event.shiftKey)}
         style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}
       >
         <div
@@ -131,6 +147,16 @@ export function TaskRow({
 
           {node.meta.eff && (
             <span style={{ fontSize: 11, color: theme.muted }}>{formatEffort(node.meta.eff)}</span>
+          )}
+
+          {atRisk && (
+            <span
+              title="Not enough free time before this is due"
+              aria-label="At risk"
+              style={{ fontSize: 11, color: '#fdd663' }}
+            >
+              ⚠ tight
+            </span>
           )}
 
           {block && (
@@ -218,6 +244,11 @@ export function formatDue(due: Date, time?: string): string {
   if (days === 1) return `Tomorrow${clock}`
   if (days === -1) return `Yesterday${clock}`
   if (days < 0) return `${Math.abs(days)}d overdue`
+
+  // Within the week, the weekday is what you actually plan around. "Fri" beats
+  // "Sep 4" when the date is four days away.
+  if (days < 7) return due.toLocaleDateString(undefined, { weekday: 'short' }) + clock
+
   return due.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + clock
 }
 

@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 
 // Extension key and OAuth client id are per-installation and live outside git.
 // Copy extension.local.example.json to extension.local.json and fill it in.
-// See SETUP.md for how to generate both.
+// See docs/SETUP.md for how to generate both.
 type LocalConfig = { key?: string; oauthClientId?: string }
 const local: LocalConfig = existsSync('extension.local.json')
   ? (JSON.parse(readFileSync('extension.local.json', 'utf8')) as LocalConfig)
@@ -14,7 +14,7 @@ export const oauthClientId = local.oauthClientId ?? ''
 if (!local.oauthClientId) {
   console.warn(
     '[bettertasks] extension.local.json missing or incomplete. ' +
-      'The build will succeed but sign-in will fail. See SETUP.md.',
+      'The build will succeed but sign-in will fail. See docs/SETUP.md.',
   )
 }
 

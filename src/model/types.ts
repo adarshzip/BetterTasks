@@ -3,7 +3,7 @@ export interface GTask {
   id: string
   title?: string
   notes?: string
-  /** RFC3339. The API may truncate the time component; see SPIKES.md. */
+  /** RFC3339. The API may truncate the time component; see docs/SPIKES.md. */
   due?: string
   status?: 'needsAction' | 'completed'
   completed?: string

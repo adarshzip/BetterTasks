@@ -19,6 +19,8 @@ export interface KeyboardActions {
   nudge: (direction: 'up' | 'down') => void
   remove: () => void
   focusQuickAdd: () => void
+  focusSearch: () => void
+  snooze: (days: number) => void
   dismiss: () => void
   undo: () => void
 }
@@ -30,7 +32,9 @@ export const SHORTCUTS: [string, string][] = [
   ['Space', 'Complete or reopen'],
   ['Tab / ⇧Tab', 'Indent or outdent'],
   ['⌥↑ / ⌥↓', 'Move up or down'],
-  ['n / /', 'Add a task'],
+  ['n', 'Add a task'],
+  ['/', 'Search'],
+  ['t / w', 'Due tomorrow / next week'],
   ['#', 'Delete task'],
   ['⌘Z', 'Undo'],
   ['Esc', 'Close the editor'],
@@ -103,8 +107,19 @@ function dispatch(event: KeyboardEvent, actions: KeyboardActions): boolean {
       return true
 
     case 'n':
-    case '/':
       actions.focusQuickAdd()
+      return true
+
+    case '/':
+      actions.focusSearch()
+      return true
+
+    case 't':
+      actions.snooze(1)
+      return true
+
+    case 'w':
+      actions.snooze(7)
       return true
 
     case '#':

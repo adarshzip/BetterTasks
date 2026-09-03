@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseEntry } from './quickadd'
+import { parseEntry, splitPastedLines } from './quickadd'
 
 const NOW = new Date(2026, 8, 2, 9, 0) // Wed 2 Sep 2026, 09:00
 
@@ -86,5 +86,39 @@ describe('parseEntry', () => {
   it('never produces an empty title from a line that had one', () => {
     expect(parseEntry('math 458 friday', [], NOW).title).toBe('')
     expect(parseEntry('  spaced   out  ', [], NOW).title).toBe('spaced out')
+  })
+})
+
+describe('splitPastedLines', () => {
+  it('splits on newlines and drops blank lines', () => {
+    expect(splitPastedLines('one\n\ntwo\n')).toEqual(['one', 'two'])
+  })
+
+  it('strips bullet characters', () => {
+    expect(splitPastedLines('- one\n* two\n• three')).toEqual(['one', 'two', 'three'])
+  })
+
+  it('strips numbered list prefixes', () => {
+    expect(splitPastedLines('1. one\n2) two')).toEqual(['one', 'two'])
+  })
+
+  // A quantity is part of the item, not a list marker.
+  it('keeps numbers that are part of the text', () => {
+    expect(splitPastedLines('2 cups flour')).toEqual(['2 cups flour'])
+    expect(splitPastedLines('read chapter 4')).toEqual(['read chapter 4'])
+  })
+
+  it('handles CRLF from Windows sources', () => {
+    expect(splitPastedLines('one\r\ntwo')).toEqual(['one', 'two'])
+  })
+
+  // A stray paste of a whole document should not create hundreds of tasks.
+  it('caps how many lines it will accept', () => {
+    const many = Array.from({ length: 200 }, (_, i) => `item ${i}`).join('\n')
+    expect(splitPastedLines(many)).toHaveLength(50)
+  })
+
+  it('returns nothing for empty input', () => {
+    expect(splitPastedLines('   \n  ')).toEqual([])
   })
 })

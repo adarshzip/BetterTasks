@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { groupTasks } from './grouping'
+import { groupTasks, matchesQuery } from './grouping'
 import { toTask } from './tree'
+import { positionAt } from '@/state/mutations'
 import type { GTask, GTaskList } from './types'
 
 const NOW = new Date(2026, 8, 2) // 2 Sep 2026
@@ -93,6 +94,73 @@ describe('groupTasks keeps trees intact', () => {
     expect(urgent).toHaveLength(0)
     expect(groups).toHaveLength(0)
     expect(deferred.map((n) => n.raw.id)).toEqual(['later'])
+  })
+})
+
+describe('ordering within a bucket', () => {
+  // A view organised by due date that lists Friday above Monday is answering
+  // the wrong question, however the tasks were ordered by hand.
+  it('sorts by due date, not manual position', () => {
+    const { groups } = group([
+      task('friday', { due: at(4), position: positionAt(0) }),
+      task('monday', { due: at(2), position: positionAt(1) }),
+    ])
+    expect(groups[0]!.nodes.map((n) => n.raw.id)).toEqual(['monday', 'friday'])
+  })
+
+  // The due view gives undated tasks their own bucket, so they only sit
+  // alongside dated ones in the class view.
+  it('puts undated tasks last within a class', () => {
+    const { groups } = group([task('someday'), task('dated', { due: at(20) })], 'category')
+    expect(groups[0]!.nodes.map((n) => n.raw.id)).toEqual(['dated', 'someday'])
+  })
+
+  it('falls back to manual order for equal due dates', () => {
+    const { groups } = group([
+      task('second', { due: at(3), position: positionAt(1) }),
+      task('first', { due: at(3), position: positionAt(0) }),
+    ])
+    expect(groups[0]!.nodes.map((n) => n.raw.id)).toEqual(['first', 'second'])
+  })
+
+  // A project inherits the urgency of its soonest piece, so it must sort by
+  // that too, not by its own distant due date.
+  it('sorts a parent by its soonest subtask', () => {
+    const { groups } = group([
+      task('soon', { due: at(3) }),
+      task('project', { due: at(6) }),
+      task('step', { parent: 'project', due: at(2) }),
+    ])
+    expect(groups[0]!.nodes.map((n) => n.raw.id)).toEqual(['project', 'soon'])
+  })
+})
+
+describe('matchesQuery', () => {
+  const titles = new Map([['l1', 'MATH 458']])
+  const of = (raw: GTask) => toTask(raw, 'l1')
+
+  it('matches an empty query', () => {
+    expect(matchesQuery(of(task('a')), '', titles)).toBe(true)
+  })
+
+  it('matches on title, case-insensitively', () => {
+    expect(matchesQuery(of(task('Problem Set')), 'problem', titles)).toBe(true)
+  })
+
+  it('matches on notes and class', () => {
+    expect(matchesQuery(of(task('a', { notes: 'read chapter 4' })), 'chapter', titles)).toBe(true)
+    expect(matchesQuery(of(task('a')), 'math', titles)).toBe(true)
+  })
+
+  it('requires every term to match', () => {
+    const t = of(task('Problem Set 4'))
+    expect(matchesQuery(t, 'problem 4', titles)).toBe(true)
+    expect(matchesQuery(t, 'problem essay', titles)).toBe(false)
+  })
+
+  it('does not match the metadata block itself', () => {
+    const t = of(task('a', { notes: 'body\n\n⟦bt⟧{"eff":90}' }))
+    expect(matchesQuery(t, 'eff', titles)).toBe(false)
   })
 })
 

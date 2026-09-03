@@ -29,6 +29,7 @@ interface Props {
   showCategory: boolean
   collapsed: ReadonlySet<string>
   selectedId: string | null
+  cursorId: string | null
   /** Reordering is only meaningful inside one list; disabled in mixed groups. */
   sortable: boolean
   onToggleCollapse: (id: string) => void
@@ -44,6 +45,7 @@ export function TaskTree({
   showCategory,
   collapsed,
   selectedId,
+  cursorId,
   sortable,
   onToggleCollapse,
   onSelect,
@@ -99,6 +101,7 @@ export function TaskTree({
         showCategory={showCategory}
         collapsed={collapsed.has(node.raw.id)}
         selected={selected}
+        focused={cursorId === node.raw.id}
         dragging={draggingId === node.raw.id}
         onToggleCollapse={onToggleCollapse}
         onToggleComplete={(id, completed) => void api.setCompleted(id, completed)}

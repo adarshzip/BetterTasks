@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import type { Theme } from './theme'
 import { groupTasks, knownCategories, type ViewMode } from '@/model/grouping'
 import { buildTree, toTask } from '@/model/tree'
@@ -8,12 +8,18 @@ import { TaskTree } from './TaskTree'
 import { QuickAdd } from './QuickAdd'
 import { Toast } from './Toast'
 import { ListMenu } from './ListMenu'
+import { useKeyboard, SHORTCUTS } from './useKeyboard'
+import { flattenTree } from '@/model/tree'
 
 export function Panel({ theme }: { theme: Theme }) {
   const api = useTasks()
   const [mode, setMode] = useState<ViewMode>('due')
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // The cursor is separate from the open editor: you move through the list
+  // without opening anything, then press Enter on the one you want.
+  const [cursorId, setCursorId] = useState<string | null>(null)
+  const [showHelp, setShowHelp] = useState(false)
   const [activeListId, setActiveListId] = useState('')
   const [showCompleted, setShowCompleted] = useState(false)
 
@@ -72,7 +78,43 @@ export function Panel({ theme }: { theme: Theme }) {
   // A task that scrolls out of existence should not keep the editor open.
   useEffect(() => {
     if (selectedId && !api.tasks.some((t) => t.id === selectedId)) setSelectedId(null)
-  }, [api.tasks, selectedId])
+    if (cursorId && !api.tasks.some((t) => t.id === cursorId)) setCursorId(null)
+  }, [api.tasks, selectedId, cursorId])
+
+  /** Every visible row, in display order, which is what the cursor walks. */
+  const visibleIds = useMemo(() => {
+    const sections = [urgent, ...groups.map((g) => g.nodes)]
+    return sections.flatMap((nodes) => flattenTree(nodes, collapsed)).map((n) => n.raw.id)
+  }, [urgent, groups, collapsed])
+
+  const cursor = cursorId ?? visibleIds[0] ?? null
+
+  useKeyboard(
+    useMemo(
+      () => ({
+        moveCursor: (delta: number) => {
+          if (visibleIds.length === 0) return
+          const at = cursor ? visibleIds.indexOf(cursor) : -1
+          const next = Math.max(0, Math.min(visibleIds.length - 1, at + delta))
+          setCursorId(visibleIds[next] ?? null)
+        },
+        toggleDetail: () => cursor && setSelectedId((prev) => (prev === cursor ? null : cursor)),
+        toggleComplete: () => {
+          const task = api.tasks.find((t) => t.id === cursor)
+          if (task) void api.setCompleted(task.id, task.status !== 'completed')
+        },
+        indent: () => cursor && void api.indent(cursor),
+        outdent: () => cursor && void api.outdent(cursor),
+        nudge: (direction: 'up' | 'down') => cursor && void api.nudge(cursor, direction),
+        remove: () => cursor && void api.removeTask(cursor),
+        focusQuickAdd: () => document.getElementById('bt-quickadd')?.focus(),
+        dismiss: () => setSelectedId(null),
+        undo: () => void api.runUndo(),
+      }),
+      [cursor, visibleIds, api],
+    ),
+    api.status === 'ready',
+  )
 
   /**
    * Manual order is a property of a list, so dragging only makes sense when a
@@ -99,11 +141,15 @@ export function Panel({ theme }: { theme: Theme }) {
       theme={theme}
       api={api}
       showCategory={showCategory}
+      cursorId={cursor}
       sortable={singleList(nodes)}
       collapsed={collapsed}
       selectedId={selectedId}
       onToggleCollapse={toggleCollapse}
-      onSelect={setSelectedId}
+      onSelect={(id) => {
+        setSelectedId(id)
+        if (id) setCursorId(id)
+      }}
     />
   )
 
@@ -126,6 +172,15 @@ export function Panel({ theme }: { theme: Theme }) {
         onRefresh={() => void api.load()}
         busy={api.status === 'loading'}
       >
+        <button
+          aria-label="Keyboard shortcuts"
+          title="Keyboard shortcuts"
+          onClick={() => setShowHelp((v) => !v)}
+          style={{ ...buttonStyle(theme), border: 'none', padding: '3px 6px', color: theme.muted }}
+        >
+          ?
+        </button>
+
         <ListMenu
           theme={theme}
           lists={api.lists}
@@ -135,6 +190,8 @@ export function Panel({ theme }: { theme: Theme }) {
           onClearCompleted={(id) => void api.clearCompleted(id)}
         />
       </Header>
+
+      {showHelp && <Shortcuts theme={theme} />}
 
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {api.status === 'loading' && <Notice theme={theme}>Loading tasks…</Notice>}
@@ -163,8 +220,17 @@ export function Panel({ theme }: { theme: Theme }) {
               theme={theme}
               lists={api.lists}
               activeListId={activeListId}
+              categories={categories}
               onListChange={setActiveListId}
-              onAdd={(listId, title) => void api.createTask(listId, title)}
+              onAdd={(listId, parsed) =>
+                void api.createTask(listId, parsed.title, undefined, {
+                  ...(parsed.due ? { due: parsed.due } : {}),
+                  ...(parsed.time ? { time: parsed.time } : {}),
+                  ...(parsed.category ? { category: parsed.category } : {}),
+                  ...(parsed.eff ? { eff: parsed.eff } : {}),
+                  ...(parsed.pri ? { pri: parsed.pri } : {}),
+                })
+              }
             />
 
             {urgent.length > 0 && (
@@ -302,6 +368,33 @@ function Section({
       </div>
       {children}
     </section>
+  )
+}
+
+function Shortcuts({ theme }: { theme: Theme }) {
+  return (
+    <div
+      style={{
+        marginBottom: 10,
+        padding: 8,
+        borderRadius: 6,
+        background: theme.surface,
+        border: `1px solid ${theme.border}`,
+        fontSize: 11,
+        display: 'grid',
+        gridTemplateColumns: 'auto 1fr',
+        gap: '4px 10px',
+      }}
+    >
+      {SHORTCUTS.map(([keys, description]) => (
+        <Fragment key={keys}>
+          <kbd style={{ color: theme.accent, fontFamily: 'inherit', whiteSpace: 'nowrap' }}>
+            {keys}
+          </kbd>
+          <span style={{ color: theme.muted }}>{description}</span>
+        </Fragment>
+      ))}
+    </div>
   )
 }
 

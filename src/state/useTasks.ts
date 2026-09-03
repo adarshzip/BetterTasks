@@ -41,13 +41,18 @@ export interface TasksApi {
   tasks: WireTask[]
   undo: UndoEntry | null
 
-  load: () => Promise<void>
+  load: (options?: { silent?: boolean }) => Promise<void>
   signIn: () => Promise<void>
   dismissError: () => void
   dismissUndo: () => void
   runUndo: () => Promise<void>
 
-  createTask: (listId: string, title: string, parent?: string) => Promise<void>
+  createTask: (
+    listId: string,
+    title: string,
+    parent?: string,
+    extras?: { due?: Date; time?: string; category?: string; eff?: number; pri?: number },
+  ) => Promise<void>
   setCompleted: (id: string, completed: boolean) => Promise<void>
   editTask: (id: string, fields: { title?: string; notes?: string }) => Promise<void>
   setDue: (id: string, date: Date | null, time?: string | null) => Promise<void>
@@ -75,8 +80,13 @@ export function useTasks(): TasksApi {
   const current = useRef<WireTask[]>([])
   current.current = tasks
 
-  const load = useCallback(async () => {
-    setStatus('loading')
+  /**
+   * `silent` reconciles in the background. A create or a cross-list move needs
+   * the server's real ids, but flipping to the loading state for that empties
+   * the panel and makes every add look like a crash.
+   */
+  const load = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!silent) setStatus('loading')
     try {
       const snapshot = await send<Snapshot>({ type: 'loadAll' })
       setLists(snapshot.lists)
@@ -88,7 +98,9 @@ export function useTasks(): TasksApi {
         return
       }
       setError(message(err))
-      setStatus('error')
+      // A failed background refresh leaves the optimistic state in place; only
+      // a failed initial load has nothing to fall back to.
+      if (!silent) setStatus('error')
     }
   }, [])
 
@@ -136,9 +148,24 @@ export function useTasks(): TasksApi {
   const find = useCallback((id: string) => current.current.find((t) => t.id === id), [])
 
   const createTask = useCallback(
-    async (listId: string, title: string, parent?: string) => {
+    async (
+      listId: string,
+      title: string,
+      parent?: string,
+      extras?: { due?: Date; time?: string; category?: string; eff?: number; pri?: number },
+    ) => {
       const trimmed = title.trim()
       if (!trimmed) return
+
+      // Quick-add extras become a metadata block and a due date on creation,
+      // so the task is complete on its first write rather than patched after.
+      const { due } = encodeDue(extras?.due ?? null, extras?.time ?? null)
+      const notes = encodeNotes('', {
+        ...(extras?.category ? { cat: extras.category } : {}),
+        ...(extras?.time ? { time: extras.time } : {}),
+        ...(extras?.eff ? { eff: extras.eff } : {}),
+        ...(extras?.pri ? { pri: extras.pri } : {}),
+      })
 
       // A temporary id keeps React keys stable until the reload replaces it.
       const task: WireTask = {
@@ -148,12 +175,19 @@ export function useTasks(): TasksApi {
         status: 'needsAction',
         position: positionAt(0),
         ...(parent ? { parent } : {}),
+        ...(due ? { due } : {}),
+        ...(notes ? { notes } : {}),
       }
 
       await run({ type: 'create', task }, async () => {
-        await send({ type: 'createTask', listId, task: { title: trimmed }, ...(parent ? { parent } : {}) })
-        // The server assigns the real id and position, so reconcile.
-        await load()
+        await send({
+          type: 'createTask',
+          listId,
+          task: { title: trimmed, ...(due ? { due } : {}), ...(notes ? { notes } : {}) },
+          ...(parent ? { parent } : {}),
+        })
+        // The server assigns the real id and position, so reconcile quietly.
+        await load({ silent: true })
       })
     },
     [run, load],
@@ -317,7 +351,7 @@ export function useTasks(): TasksApi {
           task: { title: task.title ?? '', notes: task.notes ?? '', due: task.due ?? '' },
         })
         await send({ type: 'deleteTask', listId: task.listId, taskId: id })
-        await load()
+        await load({ silent: true })
       } catch (err) {
         setTasks(before)
         setError(message(err))
@@ -363,10 +397,10 @@ export function useTasks(): TasksApi {
           })
           break
       }
-      await load()
+      await load({ silent: true })
     } catch (err) {
       setError(message(err))
-      await load()
+      await load({ silent: true })
     }
   }, [undo, load])
 
@@ -375,7 +409,7 @@ export function useTasks(): TasksApi {
       if (!title.trim()) return
       try {
         await send({ type: 'createTaskList', title: title.trim() })
-        await load()
+        await load({ silent: true })
       } catch (err) {
         setError(message(err))
       }
@@ -391,7 +425,7 @@ export function useTasks(): TasksApi {
         await send({ type: 'renameTaskList', listId, title: title.trim() })
       } catch (err) {
         setError(message(err))
-        await load()
+        await load({ silent: true })
       }
     },
     [load],
@@ -401,7 +435,7 @@ export function useTasks(): TasksApi {
     async (listId: string) => {
       try {
         await send({ type: 'clearCompleted', listId })
-        await load()
+        await load({ silent: true })
       } catch (err) {
         setError(message(err))
       }

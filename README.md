@@ -23,12 +23,17 @@ UI for ordinary work.
 - View toggle between due date and class, with a pinned "Overdue and today"
   bucket above both
 - Parent progress rollup
+- Quick add with inline parsing: `math 458 pset 4 fri 5pm 90m !1` sets the
+  class, due date, time, effort, and priority, with a live preview of what was
+  understood
+- Keyboard navigation throughout; press `?` in the panel for the list
 - Add tasks and subtasks, complete and reopen, edit title and details
 - Due date and time, effort, priority, start (defer) date, repeat interval
 - Indent, outdent, move up and down
 - Move a task to another list
 - Collapsible Completed section, and clear completed
 - Create and rename lists
+- Drag to reorder, drag right to nest
 - Undo on delete, complete, edit, and move
 - Optimistic updates with rollback, so nothing waits on the network
 - Theme follows the browser's light or dark mode
@@ -47,9 +52,14 @@ UI for ordinary work.
 - **No list deletion.** It destroys every task in the list with no undo, and
   Google's UI is one click away.
 
-Not yet built: keyboard navigation, natural language quick add, recurrence
-regeneration on completion, drag and drop, and the whole calendar layer. See
-the plan for the phase breakdown.
+**Recurrence is modelled but not wired up.** `TaskMeta.rec` and `addInterval`
+exist, and a repeat interval renders on the row, but nothing regenerates a task
+when you complete it. The control is hidden from the editor rather than
+shipping a switch that lies. Restore it in `src/ui/TaskDetail.tsx` once
+`useTasks` handles regeneration.
+
+Not yet built: recurrence regeneration, and the whole calendar layer. See the
+plan for the phase breakdown.
 
 ## Getting started
 

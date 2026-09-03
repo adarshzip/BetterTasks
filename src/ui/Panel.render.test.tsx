@@ -88,6 +88,21 @@ const click = async (el: Element | null | undefined) => {
 const byLabel = (root: Element, label: string) =>
   root.querySelector(`[aria-label="${label}"]`)
 
+/**
+ * Types into a controlled input. Assigning `.value` directly is not enough:
+ * React's value tracker sees no change and swallows the event, so the native
+ * setter has to be used to update the tracker too.
+ */
+const typeInto = async (el: HTMLInputElement, text: string) => {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+  for (const char of text) {
+    await act(async () => {
+      setter?.call(el, el.value + char)
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+}
+
 describe('Panel interactions', () => {
   it('offers a quick add field', async () => {
     const container = await mount()
@@ -142,6 +157,46 @@ describe('Panel interactions', () => {
     expect(field).toBeTruthy()
     // Falls back to the list name when no category is set.
     expect(field.placeholder).toBe('MATH 458')
+  })
+
+  // Writing per keystroke fired one API call per character and, in Class view,
+  // moved the task to a different group mid-word, unmounting the input.
+  it('does not write while typing a class, only on blur', async () => {
+    const container = await mount()
+    await click(container.querySelector('div[style*="cursor: pointer"]'))
+
+    const field = byLabel(container, 'Class') as HTMLInputElement
+    await typeInto(field, 'MATH 458')
+
+    expect(sent.filter((r) => r.type === 'patchTask')).toHaveLength(0)
+    expect(field.value).toBe('MATH 458')
+
+    await act(async () => {
+      // React maps onBlur onto focusout, which is the event that bubbles.
+      field.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+
+    const patches = sent.filter((r) => r.type === 'patchTask')
+    expect(patches).toHaveLength(1)
+    expect(JSON.stringify(patches[0])).toContain('MATH 458')
+  })
+
+  it('previews what quick add parsed before the task is created', async () => {
+    const container = await mount()
+    await typeInto(byLabel(container, 'Add a task') as HTMLInputElement, 'math 458 pset 4 90m')
+
+    const preview = byLabel(container, 'Parsed preview')
+    expect(preview?.textContent).toContain('pset 4')
+    expect(preview?.textContent).toContain('MATH 458')
+    expect(preview?.textContent).toContain('1h 30m')
+    // Previewing must not create anything.
+    expect(sent.filter((r) => r.type === 'createTask')).toHaveLength(0)
+  })
+
+  it('no longer offers a repeat control, since nothing regenerates tasks yet', async () => {
+    const container = await mount()
+    await click(container.querySelector('div[style*="cursor: pointer"]'))
+    expect(byLabel(container, 'Repeat')).toBeFalsy()
   })
 
   it('shows drag handles when a group holds one list', async () => {

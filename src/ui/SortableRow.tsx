@@ -1,6 +1,6 @@
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { Theme } from './theme'
 
 /**
@@ -22,10 +22,13 @@ export function SortableRow({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
   })
+  const [hover, setHover] = useState(false)
 
   return (
     <div
       ref={setNodeRef}
+      onPointerEnter={() => setHover(true)}
+      onPointerLeave={() => setHover(false)}
       style={{
         transform: CSS.Translate.toString(transform),
         transition,
@@ -40,17 +43,23 @@ export function SortableRow({
         {...attributes}
         {...listeners}
         aria-label="Reorder"
+        title="Drag to reorder, drag right to nest"
         style={{
           all: 'unset',
-          cursor: 'grab',
+          cursor: isDragging ? 'grabbing' : 'grab',
           touchAction: 'none',
-          width: 12,
+          width: 18,
           flexShrink: 0,
           alignSelf: 'stretch',
-          color: theme.border,
-          fontSize: 11,
+          // Visible at rest, obvious on hover. The earlier version used the
+          // border colour and was effectively invisible.
+          color: isDragging || hover ? theme.accent : theme.muted,
+          background: hover ? `${theme.accent}1a` : 'transparent',
+          borderRadius: 4,
+          fontSize: 14,
           lineHeight: '30px',
           textAlign: 'center',
+          transition: 'color 120ms, background 120ms',
         }}
       >
         ⠿

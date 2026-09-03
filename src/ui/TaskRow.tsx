@@ -13,6 +13,7 @@ interface Props {
   showCategory: boolean
   collapsed: boolean
   selected: boolean
+  focused: boolean
   dragging: boolean
   onToggleCollapse: (id: string) => void
   onToggleComplete: (id: string, completed: boolean) => void
@@ -26,6 +27,7 @@ export function TaskRow({
   showCategory,
   collapsed,
   selected,
+  focused,
   dragging,
   onToggleCollapse,
   onToggleComplete,
@@ -47,7 +49,11 @@ export function TaskRow({
         borderRadius: 6,
         position: 'relative',
         background: selected ? theme.surface : 'transparent',
-        outline: dragging ? `1px dashed ${theme.accent}` : 'none',
+        outline: dragging
+          ? `1px dashed ${theme.accent}`
+          : focused
+            ? `1px solid ${theme.accent}66`
+            : 'none',
       }}
     >
       {node.depth > 0 && <Connector depth={node.depth} theme={theme} />}
@@ -207,8 +213,11 @@ export function formatDue(due: Date, time?: string): string {
   return due.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + clock
 }
 
-function formatEffort(minutes: number): string {
+/** 45 -> "45m", 120 -> "2h", 90 -> "1h 30m". */
+export function formatEffort(minutes: number): string {
   if (minutes < 60) return `${minutes}m`
-  const hours = minutes / 60
-  return Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(1)}h`
+
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`
 }

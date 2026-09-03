@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useDraft } from './Draft'
 import type { GTaskList, TaskNode } from '@/model/types'
 import type { Theme } from './theme'
 import type { TasksApi } from '@/state/useTasks'
@@ -22,23 +22,23 @@ interface Props {
 }
 
 export function TaskDetail({ node, lists, categories, theme, api, onClose }: Props) {
-  const [title, setTitle] = useState(node.title)
-  const [notes, setNotes] = useState(node.notes)
-
-  // Re-seed when a different task is selected.
-  useEffect(() => {
-    setTitle(node.title)
-    setNotes(node.notes)
-  }, [node.raw.id, node.title, node.notes])
-
   const id = node.raw.id
+
+  // Text fields commit on blur or Enter, never per keystroke.
+  const title = useDraft(node.title, (next) => {
+    if (next.trim()) void api.editTask(id, { title: next.trim() })
+  })
+  const notes = useDraft(node.notes, (next) => void api.editTask(id, { notes: next }))
+  const category = useDraft(node.meta.cat, (next) =>
+    void api.setMeta(id, { cat: next.trim() || undefined }),
+  )
+  const effort = useDraft(node.meta.eff, (next) =>
+    void api.setMeta(id, { eff: next ? Number(next) : undefined }),
+  )
+
   const canIndent = indentTarget(api.tasks, id) !== null
   const canUp = neighbourFor(api.tasks, id, 'up') !== null
   const canDown = neighbourFor(api.tasks, id, 'down') !== null
-
-  const commitTitle = (): void => {
-    if (title.trim() && title !== node.title) void api.editTask(id, { title: title.trim() })
-  }
 
   return (
     <div
@@ -53,25 +53,13 @@ export function TaskDetail({ node, lists, categories, theme, api, onClose }: Pro
         gap: 8,
       }}
     >
-      <input
-        value={title}
-        aria-label="Title"
-        onChange={(e) => setTitle(e.target.value)}
-        onBlur={commitTitle}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') e.currentTarget.blur()
-          if (e.key === 'Escape') setTitle(node.title)
-        }}
-        style={inputStyle(theme)}
-      />
+      <input {...title} aria-label="Title" style={inputStyle(theme)} />
 
       <textarea
-        value={notes}
+        {...notes}
         aria-label="Details"
         placeholder="Details"
         rows={2}
-        onChange={(e) => setNotes(e.target.value)}
-        onBlur={() => notes !== node.notes && void api.editTask(id, { notes })}
         style={{ ...inputStyle(theme), resize: 'vertical', fontFamily: 'inherit' }}
       />
 
@@ -95,11 +83,10 @@ export function TaskDetail({ node, lists, categories, theme, api, onClose }: Pro
 
       <Field label="Class" theme={theme}>
         <input
+          {...category}
           list="bt-categories"
           aria-label="Class"
           placeholder={listTitle(lists, node.listId)}
-          value={node.meta.cat ?? ''}
-          onChange={(e) => void api.setMeta(id, { cat: e.target.value.trim() || undefined })}
           style={{ ...inputStyle(theme), flex: 1 }}
         />
         {/* Existing categories as suggestions, without restricting to them. */}
@@ -127,15 +114,12 @@ export function TaskDetail({ node, lists, categories, theme, api, onClose }: Pro
 
       <Field label="Effort" theme={theme}>
         <input
+          {...effort}
           type="number"
           min={0}
           step={15}
           aria-label="Effort in minutes"
           placeholder="minutes"
-          value={node.meta.eff ?? ''}
-          onChange={(e) =>
-            void api.setMeta(id, { eff: e.target.value ? Number(e.target.value) : undefined })
-          }
           style={{ ...inputStyle(theme), width: 90 }}
         />
         <select
@@ -161,18 +145,9 @@ export function TaskDetail({ node, lists, categories, theme, api, onClose }: Pro
           onChange={(e) => void api.setMeta(id, { defer: e.target.value || undefined })}
           style={{ ...inputStyle(theme), flex: 1 }}
         />
-        <select
-          aria-label="Repeat"
-          value={node.meta.rec ?? ''}
-          onChange={(e) => void api.setMeta(id, { rec: e.target.value || undefined })}
-          style={{ ...inputStyle(theme), width: 110 }}
-        >
-          <option value="">No repeat</option>
-          <option value="1d">Daily</option>
-          <option value="1w">Weekly</option>
-          <option value="2w">Fortnightly</option>
-          <option value="1m">Monthly</option>
-        </select>
+        {/* Repeat is intentionally absent: the model supports it, but nothing
+            regenerates a task on completion yet, so the control would lie.
+            Restore this once useTasks handles recurrence. */}
       </Field>
 
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>

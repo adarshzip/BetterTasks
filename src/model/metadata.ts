@@ -65,6 +65,8 @@ function parseMeta(payload: string): TaskMeta {
   if (isIsoDate(raw.defer)) meta.defer = raw.defer
   if (typeof raw.rec === 'string' && /^\d+[dwm]$/.test(raw.rec)) meta.rec = raw.rec
   if (isClockTime(raw.time)) meta.time = raw.time
+  if (typeof raw.ev === 'string' && raw.ev) meta.ev = raw.ev
+  if (isTimestamp(raw.evs)) meta.evs = raw.evs
 
   return meta
 }
@@ -75,6 +77,10 @@ function isPositiveInt(v: unknown): v is number {
 
 function isIsoDate(v: unknown): v is string {
   return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
+}
+
+function isTimestamp(v: unknown): v is string {
+  return typeof v === 'string' && !Number.isNaN(Date.parse(v))
 }
 
 function isClockTime(v: unknown): v is string {
@@ -106,6 +112,8 @@ function compactMeta(meta: MetaPatch): TaskMeta {
   if (isIsoDate(meta.defer)) out.defer = meta.defer
   if (meta.rec && /^\d+[dwm]$/.test(meta.rec)) out.rec = meta.rec
   if (isClockTime(meta.time)) out.time = meta.time
+  if (meta.ev) out.ev = meta.ev
+  if (isTimestamp(meta.evs)) out.evs = meta.evs
   return out
 }
 

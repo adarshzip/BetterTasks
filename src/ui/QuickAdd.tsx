@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import type { GTaskList } from '@/model/types'
 import type { Theme } from './theme'
 import { parseEntry, type ParsedEntry } from '@/model/quickadd'
-import { colorFor } from '@/model/grouping'
 import { formatEffort } from './TaskRow'
 
 /**
@@ -20,6 +19,7 @@ interface Props {
   activeListId: string
   onListChange: (listId: string) => void
   onAdd: (listId: string, parsed: ParsedEntry) => void
+  colourOf: (category: string) => string
 }
 
 export function QuickAdd({
@@ -29,6 +29,7 @@ export function QuickAdd({
   activeListId,
   onListChange,
   onAdd,
+  colourOf,
 }: Props) {
   const [text, setText] = useState('')
   const parsed = useMemo(() => (text.trim() ? parseEntry(text, categories) : null), [text, categories])
@@ -95,15 +96,23 @@ export function QuickAdd({
         )}
       </div>
 
-      {parsed && <Preview parsed={parsed} theme={theme} />}
+      {parsed && <Preview parsed={parsed} theme={theme} colourOf={colourOf} />}
     </div>
   )
 }
 
-function Preview({ parsed, theme }: { parsed: ParsedEntry; theme: Theme }) {
+function Preview({
+  parsed,
+  theme,
+  colourOf,
+}: {
+  parsed: ParsedEntry
+  theme: Theme
+  colourOf: (category: string) => string
+}) {
   const chips: { label: string; color?: string }[] = []
 
-  if (parsed.category) chips.push({ label: parsed.category, color: colorFor(parsed.category) })
+  if (parsed.category) chips.push({ label: parsed.category, color: colourOf(parsed.category) })
   if (parsed.due) {
     const date = parsed.due.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
     chips.push({ label: parsed.time ? `${date} ${parsed.time}` : date })

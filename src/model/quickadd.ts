@@ -1,4 +1,5 @@
 import * as chrono from 'chrono-node'
+import { COURSE, courseCodeOf } from './courses'
 
 /**
  * Parses a quick-add line into a task.
@@ -22,8 +23,6 @@ export interface ParsedEntry {
   pri?: number
 }
 
-/** e.g. MATH 458, CS101, WRIT 340 */
-const COURSE = /\b([a-z]{2,4})\s?(\d{3}[a-z]?)\b/i
 /** e.g. #thesis, for categories that are not course codes */
 const TAG = /(?:^|\s)#([\w-]+)/
 /** e.g. 30m, 2h, 1.5h */
@@ -75,13 +74,8 @@ function takeCategory(text: string, known: string[]): { value: string; rest: str
   const tag = text.match(TAG)
   if (tag?.[1]) return { value: tag[1], rest: text.replace(TAG, ' ') }
 
-  const course = text.match(COURSE)
-  if (course?.[1] && course[2]) {
-    return {
-      value: `${course[1].toUpperCase()} ${course[2].toUpperCase()}`,
-      rest: text.replace(COURSE, ' '),
-    }
-  }
+  const course = courseCodeOf(text)
+  if (course) return { value: course, rest: text.replace(COURSE, ' ') }
 
   return null
 }

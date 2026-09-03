@@ -31,8 +31,21 @@ UI for ordinary work.
 - Due date and time, effort, priority, start (defer) date, repeat interval
 - Indent, outdent, move up and down
 - Move a task to another list
-- Collapsible Completed section, and clear completed
+- The due view shows only outstanding work. The class view keeps a completed
+  task visible, crossed out, until its due date passes, so you can confirm
+  coursework is done without opening the history section. A task lingers only
+  if it has both a class and a future due date: uncategorised or undated tasks
+  leave the list as soon as they are ticked off
+- Collapsible Completed section for everything older, loaded on demand
+- "Scheduled for later" section for tasks with a future start date
 - Create and rename lists
+- Class pills take their colour from the matching course's calendar events, so
+  the panel and the grid agree. Courses are derived automatically from a
+  four-week scan and populate the class autocomplete
+- Schedule work time on a task: the panel proposes openings that fit the effort
+  estimate before the due date, avoiding existing events, and creates a real
+  event on a dedicated BetterTasks calendar. Completing a task clears a block
+  that has not happened yet, and leaves one that has
 - Drag to reorder, drag right to nest
 - Undo on delete, complete, edit, and move
 - Optimistic updates with rollback, so nothing waits on the network

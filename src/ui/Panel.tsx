@@ -1,8 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import type { Theme } from './theme'
-import { groupTasks, knownCategories, type ViewMode } from '@/model/grouping'
+import { groupTasks, knownCategories, lingers, type ViewMode } from '@/model/grouping'
 import { buildTree, toTask } from '@/model/tree'
 import { useTasks } from '@/state/useTasks'
+import { useCalendar } from '@/state/useCalendar'
 import { loadViewState, saveViewState } from '@/state/store'
 import { TaskTree } from './TaskTree'
 import { QuickAdd } from './QuickAdd'
@@ -13,6 +14,7 @@ import { flattenTree } from '@/model/tree'
 
 export function Panel({ theme }: { theme: Theme }) {
   const api = useTasks()
+  const calendar = useCalendar()
   const [mode, setMode] = useState<ViewMode>('due')
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -22,6 +24,8 @@ export function Panel({ theme }: { theme: Theme }) {
   const [showHelp, setShowHelp] = useState(false)
   const [activeListId, setActiveListId] = useState('')
   const [showCompleted, setShowCompleted] = useState(false)
+  const [showDeferred, setShowDeferred] = useState(false)
+  const [schedulingId, setSchedulingId] = useState<string | null>(null)
 
   useEffect(() => {
     void loadViewState().then((state) => {
@@ -68,12 +72,24 @@ export function Panel({ theme }: { theme: Theme }) {
 
   // Dates are rebuilt here, on this side of the JSON message boundary.
   const tasks = useMemo(() => api.tasks.map((raw) => toTask(raw, raw.listId)), [api.tasks])
-  const { urgent, groups } = useMemo(
+  const { urgent, groups, deferred } = useMemo(
     () => groupTasks(tasks, api.lists, mode),
     [tasks, api.lists, mode],
   )
-  const categories = useMemo(() => knownCategories(tasks, api.lists), [tasks, api.lists])
-  const completed = useMemo(() => buildTree(tasks.filter((t) => t.completed)), [tasks])
+  const categories = useMemo(() => {
+    const fromTasks = knownCategories(tasks, api.lists)
+    const fromCalendar = calendar.courses.map((c) => c.code)
+    return [...new Set([...fromCalendar, ...fromTasks])].sort((a, b) => a.localeCompare(b))
+  }, [tasks, api.lists, calendar.courses])
+  // Excludes tasks still shown in the list above, so nothing appears twice.
+  const completed = useMemo(() => {
+    const defaultListId = api.lists[0]?.id
+    const options = defaultListId ? { defaultListId } : {}
+    // In the due view nothing lingers, so everything completed belongs here.
+    const shown = (t: (typeof tasks)[number]) =>
+      mode === 'category' && lingers(t, new Date(), options)
+    return buildTree(tasks.filter((t) => t.completed && !shown(t)))
+  }, [tasks, api.lists, mode])
 
   // A task that scrolls out of existence should not keep the editor open.
   useEffect(() => {
@@ -101,7 +117,7 @@ export function Panel({ theme }: { theme: Theme }) {
         toggleDetail: () => cursor && setSelectedId((prev) => (prev === cursor ? null : cursor)),
         toggleComplete: () => {
           const task = api.tasks.find((t) => t.id === cursor)
-          if (task) void api.setCompleted(task.id, task.status !== 'completed')
+          if (task) void completeTask(task.id, task.status !== 'completed')
         },
         indent: () => cursor && void api.indent(cursor),
         outdent: () => cursor && void api.outdent(cursor),
@@ -133,15 +149,57 @@ export function Panel({ theme }: { theme: Theme }) {
     return ids.size <= 1
   }
 
+  /**
+   * Creates the work block, then records the event id on the task so the row
+   * can show when it is scheduled without scanning the calendar.
+   */
+  const scheduleTask = useCallback(
+    async (node: (typeof urgent)[number], slot: { start: Date; end: Date }) => {
+      setSchedulingId(null)
+
+      // Replace rather than orphan: rescheduling should not leave the old block.
+      const existing = calendar.blocks.get(node.raw.id)
+      if (existing) await calendar.unschedule(existing.eventId)
+
+      await calendar.schedule(node.raw.id, node.title, slot)
+    },
+    [calendar],
+  )
+
+  /**
+   * Completing a task clears a work block that has not happened yet: an hour
+   * blocked out this evening for something already finished is noise. A block
+   * in the past is left alone, because it is a record of where time went.
+   */
+  const completeTask = useCallback(
+    async (id: string, completed: boolean) => {
+      const block = calendar.blocks.get(id)
+
+      await api.setCompleted(id, completed)
+      if (!completed || !block) return
+
+      // Only a block that has not happened yet. A past one is a record.
+      if (block.start > new Date()) await calendar.unschedule(block.eventId)
+    },
+    [api, calendar],
+  )
+
   const tree = (nodes: typeof urgent, showCategory: boolean) => (
     <TaskTree
       nodes={nodes}
       lists={api.lists}
       categories={categories}
+      colourOf={calendar.colourOf}
       theme={theme}
       api={api}
       showCategory={showCategory}
       cursorId={cursor}
+      busy={calendar.busy}
+      blocks={calendar.blocks}
+      schedulingId={schedulingId}
+      onStartScheduling={setSchedulingId}
+      onSchedule={scheduleTask}
+      onComplete={completeTask}
       sortable={singleList(nodes)}
       collapsed={collapsed}
       selectedId={selectedId}
@@ -221,6 +279,7 @@ export function Panel({ theme }: { theme: Theme }) {
               lists={api.lists}
               activeListId={activeListId}
               categories={categories}
+              colourOf={calendar.colourOf}
               onListChange={setActiveListId}
               onAdd={(listId, parsed) =>
                 void api.createTask(listId, parsed.title, undefined, {
@@ -249,17 +308,39 @@ export function Panel({ theme }: { theme: Theme }) {
               <Notice theme={theme}>Nothing due. Nice work.</Notice>
             )}
 
-            {completed.length > 0 && (
+            {deferred.length > 0 && (
               <Section
-                title={`Completed (${completed.length})`}
+                title={`Scheduled for later (${deferred.length})`}
                 theme={theme}
                 collapsible
-                open={showCompleted}
-                onToggle={() => setShowCompleted((v) => !v)}
+                open={showDeferred}
+                onToggle={() => setShowDeferred((v) => !v)}
               >
-                {showCompleted && tree(completed, true)}
+                {showDeferred && tree(deferred, true)}
               </Section>
             )}
+
+            <Section
+              title={completedTitle(completed.length, api.completedLoaded, api.completedLoading)}
+              theme={theme}
+              collapsible
+              open={showCompleted}
+              onToggle={() => {
+                const next = !showCompleted
+                setShowCompleted(next)
+                // Fetched on first open, then cached for the session.
+                if (next && !api.completedLoaded) void api.loadCompleted()
+              }}
+            >
+              {showCompleted &&
+                (completed.length > 0 ? (
+                  tree(completed, true)
+                ) : (
+                  <Notice theme={theme}>
+                    {api.completedLoading ? 'Loading…' : 'Nothing completed yet.'}
+                  </Notice>
+                ))}
+            </Section>
           </>
         )}
       </div>
@@ -267,10 +348,13 @@ export function Panel({ theme }: { theme: Theme }) {
       <Toast
         theme={theme}
         undoLabel={api.undo?.label ?? null}
-        error={api.tasks.length ? api.error : ''}
+        error={calendar.error || (api.tasks.length ? api.error : '')}
         onUndo={() => void api.runUndo()}
         onDismissUndo={api.dismissUndo}
-        onDismissError={api.dismissError}
+        onDismissError={() => {
+          calendar.dismissError()
+          api.dismissError()
+        }}
       />
     </div>
   )
@@ -300,6 +384,8 @@ function Header({
           <button
             key={value}
             onClick={() => onMode(value)}
+            aria-label={value === 'due' ? 'Group by due date' : 'Group by class'}
+            aria-pressed={mode === value}
             style={{
               ...buttonStyle(theme),
               border: 'none',
@@ -369,6 +455,17 @@ function Section({
       {children}
     </section>
   )
+}
+
+/**
+ * The count is only exact once completed tasks have been fetched. Before that
+ * we may still know about tasks completed in this session, so the count is
+ * shown with a "+" rather than pretending to be the total.
+ */
+function completedTitle(known: number, loaded: boolean, loading: boolean): string {
+  if (loading) return 'Completed (loading…)'
+  if (loaded) return `Completed (${known})`
+  return known > 0 ? `Completed (${known}+)` : 'Completed'
 }
 
 function Shortcuts({ theme }: { theme: Theme }) {

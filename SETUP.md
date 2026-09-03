@@ -89,12 +89,20 @@ remove scopes** and add these two by pasting them into the manual entry box:
 
 ```
 https://www.googleapis.com/auth/tasks
-https://www.googleapis.com/auth/calendar.events
+https://www.googleapis.com/auth/calendar
 ```
 
 Both are classified "sensitive," not "restricted." That distinction matters:
 restricted scopes (Gmail, Drive) require a third-party security assessment
 that costs thousands of dollars. Sensitive scopes do not.
+
+**If you set this up before the calendar layer**, you will have
+`calendar.events` here instead. That scope covers reading and writing events
+and nothing else: colours, the calendar list, free/busy, and creating a
+calendar all fail with "insufficient authentication scopes" (see `SPIKES.md`).
+Replace it with the broader `calendar` scope above, then sign out and back in
+inside the panel. The extension discards a token granted under an older scope
+set automatically, so the only manual step is the Cloud Console change.
 
 ### 2d. Add yourself as a test user
 

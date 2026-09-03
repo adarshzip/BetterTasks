@@ -1,7 +1,6 @@
 import type { TaskNode } from '@/model/types'
 import type { Theme } from './theme'
 import { progressOf } from '@/model/tree'
-import { colorFor } from '@/model/grouping'
 
 /** Width of one nesting level, and of the connector gutter beside it. */
 export const INDENT = 20
@@ -10,6 +9,9 @@ interface Props {
   node: TaskNode
   theme: Theme
   category: string
+  categoryColour: string
+  /** Live work block from the calendar, or null when not scheduled. */
+  block: { start: Date; end: Date } | null
   showCategory: boolean
   collapsed: boolean
   selected: boolean
@@ -24,6 +26,8 @@ export function TaskRow({
   node,
   theme,
   category,
+  categoryColour,
+  block,
   showCategory,
   collapsed,
   selected,
@@ -117,7 +121,7 @@ export function TaskRow({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, flexWrap: 'wrap' }}>
-          {showCategory && <Pill label={category} color={colorFor(category)} />}
+          {showCategory && <Pill label={category} color={categoryColour} />}
 
           {node.due && (
             <span style={{ fontSize: 11, color: overdue ? '#f28b82' : theme.muted }}>
@@ -127,6 +131,10 @@ export function TaskRow({
 
           {node.meta.eff && (
             <span style={{ fontSize: 11, color: theme.muted }}>{formatEffort(node.meta.eff)}</span>
+          )}
+
+          {block && (
+            <span style={{ fontSize: 11, color: theme.accent }}>▦ {formatBlock(block.start)}</span>
           )}
 
           {node.meta.rec && <span style={{ fontSize: 11, color: theme.muted }}>↻ {node.meta.rec}</span>}
@@ -214,6 +222,14 @@ export function formatDue(due: Date, time?: string): string {
 }
 
 /** 45 -> "45m", 120 -> "2h", 90 -> "1h 30m". */
+function formatBlock(start: Date): string {
+  return start.toLocaleString(undefined, {
+    weekday: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
 export function formatEffort(minutes: number): string {
   if (minutes < 60) return `${minutes}m`
 

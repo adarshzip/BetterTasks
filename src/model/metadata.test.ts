@@ -46,6 +46,14 @@ describe('decodeNotes', () => {
     expect(decodeNotes(notes)).toEqual({ body: notes, meta: {} })
   })
 
+  it('accepts a scheduled block, and rejects a malformed timestamp', () => {
+    expect(decodeNotes('⟦bt⟧{"ev":"abc123","evs":"2026-09-04T17:00:00.000Z"}').meta).toEqual({
+      ev: 'abc123',
+      evs: '2026-09-04T17:00:00.000Z',
+    })
+    expect(decodeNotes('⟦bt⟧{"ev":"abc123","evs":"soon"}').meta).toEqual({ ev: 'abc123' })
+  })
+
   it('accepts valid optional fields', () => {
     const meta = decodeNotes('⟦bt⟧{"defer":"2026-09-10","rec":"1w","time":"23:59"}').meta
     expect(meta).toEqual({ defer: '2026-09-10', rec: '1w', time: '23:59' })

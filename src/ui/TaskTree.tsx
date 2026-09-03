@@ -19,17 +19,26 @@ import { projectDrop, type Row } from '@/state/projection'
 import { TaskRow, INDENT } from './TaskRow'
 import { TaskDetail } from './TaskDetail'
 import { SortableRow } from './SortableRow'
+import { ScheduleDialog } from './ScheduleDialog'
+import type { Interval } from '@/model/schedule'
 
 interface Props {
   nodes: TaskNode[]
   lists: GTaskList[]
   categories: string[]
+  colourOf: (category: string) => string
   theme: Theme
   api: TasksApi
   showCategory: boolean
   collapsed: ReadonlySet<string>
   selectedId: string | null
   cursorId: string | null
+  busy: Interval[]
+  blocks: Map<string, { eventId: string; start: Date; end: Date }>
+  schedulingId: string | null
+  onStartScheduling: (id: string | null) => void
+  onSchedule: (node: TaskNode, slot: Interval) => void
+  onComplete: (id: string, completed: boolean) => void
   /** Reordering is only meaningful inside one list; disabled in mixed groups. */
   sortable: boolean
   onToggleCollapse: (id: string) => void
@@ -40,12 +49,19 @@ export function TaskTree({
   nodes,
   lists,
   categories,
+  colourOf,
   theme,
   api,
   showCategory,
   collapsed,
   selectedId,
   cursorId,
+  busy,
+  blocks,
+  schedulingId,
+  onStartScheduling,
+  onSchedule,
+  onComplete,
   sortable,
   onToggleCollapse,
   onSelect,
@@ -98,13 +114,15 @@ export function TaskTree({
         node={node}
         theme={theme}
         category={categoryOf(node, listTitles)}
+        categoryColour={colourOf(categoryOf(node, listTitles))}
+        block={blocks.get(node.raw.id) ?? null}
         showCategory={showCategory}
         collapsed={collapsed.has(node.raw.id)}
         selected={selected}
         focused={cursorId === node.raw.id}
         dragging={draggingId === node.raw.id}
         onToggleCollapse={onToggleCollapse}
-        onToggleComplete={(id, completed) => void api.setCompleted(id, completed)}
+        onToggleComplete={(id, completed) => onComplete(id, completed)}
         onSelect={(id) => onSelect(selected ? null : id)}
       />
     )
@@ -126,7 +144,19 @@ export function TaskTree({
             categories={categories}
             theme={theme}
             api={api}
+            scheduled={blocks.has(node.raw.id)}
+            onSchedule={() => onStartScheduling(node.raw.id)}
             onClose={() => onSelect(null)}
+          />
+        )}
+
+        {schedulingId === node.raw.id && (
+          <ScheduleDialog
+            node={node}
+            theme={theme}
+            busy={busy}
+            onSchedule={(slot) => onSchedule(node, slot)}
+            onCancel={() => onStartScheduling(null)}
           />
         )}
       </Fragment>

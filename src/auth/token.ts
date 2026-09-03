@@ -21,9 +21,14 @@
 
 declare const __OAUTH_CLIENT_ID__: string
 
+/**
+ * `calendar.events` covers reading and writing events and nothing else:
+ * colours, the calendar list, free/busy, and creating a calendar all fail on
+ * scopes (SPIKES.md). The broader `calendar` scope is required for those.
+ */
 const SCOPES = [
   'https://www.googleapis.com/auth/tasks',
-  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/calendar',
 ]
 
 /** Renew a little early so a request never sets off mid-flight. */
@@ -42,7 +47,12 @@ export class AuthError extends Error {
 interface CachedToken {
   token: string
   expiresAt: number
+  /** The scopes this token was granted under; see `usable`. */
+  scopes?: string
 }
+
+/** Identifies the scope set, so a token granted under an older one is dropped. */
+const SCOPE_KEY = SCOPES.join(' ')
 
 const CACHE_KEY = 'bettertasks:token'
 
@@ -55,8 +65,15 @@ const CACHE_KEY = 'bettertasks:token'
  */
 let cached: CachedToken | null = null
 
+/**
+ * A cached token is only usable if it has not expired AND was granted under the
+ * current scope set. Without the scope check, adding a scope leaves a stale
+ * token in place that keeps failing with "insufficient authentication scopes",
+ * which reads as a broken feature rather than a missing consent.
+ */
 function usable(entry: CachedToken | null): entry is CachedToken {
-  return !!entry && entry.expiresAt > Date.now() + EXPIRY_SKEW_MS
+  if (!entry || entry.expiresAt <= Date.now() + EXPIRY_SKEW_MS) return false
+  return entry.scopes === SCOPE_KEY
 }
 
 async function readCache(): Promise<CachedToken | null> {
@@ -151,7 +168,7 @@ function parseRedirect(redirect: string, interactive: boolean): string {
   }
 
   const expiresIn = Number(params.get('expires_in')) || 3600
-  void writeCache({ token, expiresAt: Date.now() + expiresIn * 1000 })
+  void writeCache({ token, expiresAt: Date.now() + expiresIn * 1000, scopes: SCOPE_KEY })
 
   return token
 }

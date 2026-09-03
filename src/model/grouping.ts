@@ -39,34 +39,75 @@ export function isDeferred(task: Task, now = new Date()): boolean {
   return new Date(y, m - 1, d) > startOfDay(now)
 }
 
-/** Overdue or due today. */
+/**
+ * Overdue or due today. Completed tasks are not excluded here: a task that is
+ * completed but still lingering should stay in the group it was in, crossed
+ * out, rather than jumping somewhere else.
+ */
 export function isUrgent(task: Task, now = new Date()): boolean {
-  if (!task.due || task.completed) return false
+  if (!task.due) return false
   return task.due <= endOfDay(now)
 }
 
 /**
- * Groups tasks for display.
+ * Whether a task has been deliberately categorised.
  *
- * The ordering constraint that matters: the tree is built ONCE across every
- * task, and only whole trees are assigned to groups. Bucketing individual
- * tasks and building a tree per bucket looks equivalent and is not. A parent
- * due in a month and its subtask due this week land in different buckets, and
- * the subtask then has no parent inside its own bucket, so it renders as a
- * flat root. That is exactly the native sidebar's bug.
- *
- * A tree's bucket therefore comes from the earliest due date anywhere in it,
- * so a project inherits the urgency of its soonest piece and the hierarchy
- * stays intact.
+ * Two setups both count, because both are supported: an explicit class in the
+ * metadata, or living in a list other than the default one, which is what
+ * one-list-per-class looks like. A task sitting untagged in the default list
+ * has not been categorised.
  */
+export function isCategorised(task: Task, defaultListId?: string): boolean {
+  if (task.meta.cat) return true
+  return !!defaultListId && task.listId !== defaultListId
+}
+
+/**
+ * Whether a completed task stays in the main list rather than moving to the
+ * Completed section.
+ *
+ * Two conditions, both required. It must have a due date that has not passed,
+ * so you can confirm the thing due Friday is already done without opening a
+ * history screen. And it must belong to a class, because the confirmation is
+ * only worth the clutter for coursework: an uncategorised errand leaves the
+ * list the moment it is ticked off.
+ *
+ * The caller adds a third condition: this only applies in the class view. The
+ * due view answers "what is left to do", and finished work has no place in
+ * that answer.
+ */
+export function lingers(
+  task: Task,
+  now = new Date(),
+  options: { defaultListId?: string } = {},
+): boolean {
+  if (!task.completed || !task.due) return false
+  if (!isCategorised(task, options.defaultListId)) return false
+  return endOfDay(task.due) >= now
+}
+
 export function groupTasks(
   tasks: Task[],
   lists: GTaskList[],
   mode: ViewMode,
   now = new Date(),
-): { urgent: TaskNode[]; groups: Group[] } {
+): { urgent: TaskNode[]; groups: Group[]; deferred: TaskNode[] } {
   const listTitles = new Map(lists.map((l) => [l.id, l.title ?? 'Untitled']))
-  const visible = tasks.filter((t) => !t.completed && !isDeferred(t, now))
+  // Completed tasks linger in the class view only, and only when categorised
+  // and not yet past due. The due view is strictly what is still outstanding.
+  const defaultListId = lists[0]?.id
+  const keepCompleted = mode === 'category'
+  const active = tasks.filter(
+    (t) =>
+      !t.completed ||
+      (keepCompleted && lingers(t, now, { ...(defaultListId ? { defaultListId } : {}) })),
+  )
+
+  // Deferred tasks are returned rather than dropped. Hiding them with no way
+  // to see them again is a trapdoor: you cannot clear a start date on a task
+  // you cannot reach.
+  const visible = active.filter((t) => !isDeferred(t, now))
+  const deferred = buildTree(active.filter((t) => isDeferred(t, now)))
 
   // Built across everything, so a child never loses its parent to a bucket.
   // A child whose parent was filtered out becomes a root, which is correct.
@@ -95,7 +136,7 @@ export function groupTasks(
     .map(([key, bucket]) => ({ key, label: bucket.label, nodes: bucket.nodes }))
     .sort((a, b) => (mode === 'due' ? a.key.localeCompare(b.key) : a.label.localeCompare(b.label)))
 
-  return { urgent, groups }
+  return { urgent, groups, deferred }
 }
 
 /** A tree is urgent if anything in it is, so today's subtask surfaces the project. */

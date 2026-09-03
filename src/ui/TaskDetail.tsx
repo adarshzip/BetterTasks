@@ -18,10 +18,12 @@ interface Props {
   categories: string[]
   theme: Theme
   api: TasksApi
+  scheduled: boolean
+  onSchedule: () => void
   onClose: () => void
 }
 
-export function TaskDetail({ node, lists, categories, theme, api, onClose }: Props) {
+export function TaskDetail({ node, lists, categories, theme, api, scheduled, onSchedule, onClose }: Props) {
   const id = node.raw.id
 
   // Text fields commit on blur or Enter, never per keystroke.
@@ -34,6 +36,19 @@ export function TaskDetail({ node, lists, categories, theme, api, onClose }: Pro
   )
   const effort = useDraft(node.meta.eff, (next) =>
     void api.setMeta(id, { eff: next ? Number(next) : undefined }),
+  )
+
+  /**
+   * Date inputs commit on blur too. A native date field fires change on every
+   * segment edit, so navigating from September to October in the picker was
+   * writing an October due date on the way past.
+   */
+  const dueDate = useDraft(toDateInput(node.due), (next) =>
+    void api.setDue(id, parseDateInput(next), node.meta.time),
+  )
+  const dueTime = useDraft(node.meta.time, (next) => void api.setDue(id, node.due, next || null))
+  const startDate = useDraft(node.meta.defer, (next) =>
+    void api.setMeta(id, { defer: next || undefined }),
   )
 
   const canIndent = indentTarget(api.tasks, id) !== null
@@ -65,18 +80,16 @@ export function TaskDetail({ node, lists, categories, theme, api, onClose }: Pro
 
       <Field label="Due" theme={theme}>
         <input
+          {...dueDate}
           type="date"
           aria-label="Due date"
-          value={toDateInput(node.due)}
-          onChange={(e) => void api.setDue(id, parseDateInput(e.target.value), node.meta.time)}
           style={{ ...inputStyle(theme), flex: 1 }}
         />
         <input
+          {...dueTime}
           type="time"
           aria-label="Due time"
-          value={node.meta.time ?? ''}
           disabled={!node.due}
-          onChange={(e) => void api.setDue(id, node.due, e.target.value || null)}
           style={{ ...inputStyle(theme), width: 100 }}
         />
       </Field>
@@ -139,10 +152,9 @@ export function TaskDetail({ node, lists, categories, theme, api, onClose }: Pro
 
       <Field label="Start" theme={theme}>
         <input
+          {...startDate}
           type="date"
           aria-label="Show from"
-          value={node.meta.defer ?? ''}
-          onChange={(e) => void api.setMeta(id, { defer: e.target.value || undefined })}
           style={{ ...inputStyle(theme), flex: 1 }}
         />
         {/* Repeat is intentionally absent: the model supports it, but nothing
@@ -176,6 +188,9 @@ export function TaskDetail({ node, lists, categories, theme, api, onClose }: Pro
 
         <span style={{ flex: 1 }} />
 
+        <Action theme={theme} onClick={onSchedule} title="Schedule work time">
+          {scheduled ? 'Reschedule' : 'Schedule'}
+        </Action>
         <Action
           theme={theme}
           onClick={() => {

@@ -1,10 +1,23 @@
 import type { GTask, GTaskList, WireTask } from '@/model/types'
+import type { WireCalendar, WireEvent } from '@/api/calendar'
 
 /** The content script cannot reach chrome.identity, so it asks the worker. */
 export type Request =
   | { type: 'signIn' }
   | { type: 'signOut' }
   | { type: 'loadAll' }
+  | { type: 'loadCompleted' }
+  | { type: 'loadCalendar'; days?: number }
+  | { type: 'loadBusy'; timeMin: string; timeMax: string }
+  | {
+      type: 'scheduleTask'
+      taskId: string
+      title: string
+      start: string
+      end: string
+    }
+  | { type: 'unscheduleTask'; eventId: string }
+  | { type: 'loadBlocks' }
   | { type: 'createTask'; listId: string; task: Partial<GTask>; parent?: string }
   | { type: 'patchTask'; listId: string; taskId: string; patch: Partial<GTask> }
   | { type: 'deleteTask'; listId: string; taskId: string }
@@ -12,6 +25,23 @@ export type Request =
   | { type: 'createTaskList'; title: string }
   | { type: 'renameTaskList'; listId: string; title: string }
   | { type: 'clearCompleted'; listId: string }
+
+/**
+ * Calendar context: the events used to derive courses and colours, the colour
+ * palette, and the calendar list. All raw API JSON, because this crosses the
+ * worker's JSON boundary.
+ */
+export interface CalendarSnapshot {
+  events: WireEvent[]
+  palette: Record<string, { background: string }>
+  calendars: WireCalendar[]
+}
+
+/** A busy interval as raw ISO strings, because this crosses the JSON boundary. */
+export interface WireInterval {
+  start: string
+  end: string
+}
 
 export interface Snapshot {
   lists: GTaskList[]

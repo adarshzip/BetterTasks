@@ -45,6 +45,15 @@ export interface TaskMeta {
   rec?: string
   /** Time of day the task is due, HH:MM, if the API truncated it off `due`. */
   time?: string
+  /**
+   * Legacy link to a scheduled work block. No longer written: the calendar is
+   * the source of truth for block timing, so that editing or deleting the
+   * event in Google Calendar is reflected immediately instead of leaving a
+   * stale copy on the task. Still decoded so older tasks round-trip cleanly.
+   */
+  ev?: string
+  /** Legacy block start time. See `ev`. */
+  evs?: string
 }
 
 /** A task plus its decoded metadata and the list it came from. */

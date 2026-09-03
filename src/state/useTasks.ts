@@ -40,8 +40,12 @@ export interface TasksApi {
   lists: GTaskList[]
   tasks: WireTask[]
   undo: UndoEntry | null
+  /** Completed tasks are fetched on demand; false until they have been. */
+  completedLoaded: boolean
+  completedLoading: boolean
 
   load: (options?: { silent?: boolean }) => Promise<void>
+  loadCompleted: () => Promise<void>
   signIn: () => Promise<void>
   dismissError: () => void
   dismissUndo: () => void
@@ -75,6 +79,8 @@ export function useTasks(): TasksApi {
   const [lists, setLists] = useState<GTaskList[]>([])
   const [tasks, setTasks] = useState<WireTask[]>([])
   const [undo, setUndo] = useState<UndoEntry | null>(null)
+  const [completedLoaded, setCompletedLoaded] = useState(false)
+  const [completedLoading, setCompletedLoading] = useState(false)
 
   // Mutations read the current array without re-creating every callback.
   const current = useRef<WireTask[]>([])
@@ -90,7 +96,17 @@ export function useTasks(): TasksApi {
     try {
       const snapshot = await send<Snapshot>({ type: 'loadAll' })
       setLists(snapshot.lists)
-      setTasks(snapshot.tasks)
+
+      // The snapshot holds open tasks only. Keep any completed tasks already
+      // in memory, so a background refresh does not make a parent's progress
+      // rollup jump backwards the moment a subtask is ticked off.
+      setTasks((prev) => {
+        const incoming = new Set(snapshot.tasks.map((t) => t.id))
+        const keptCompleted = prev.filter(
+          (t) => t.status === 'completed' && !incoming.has(t.id),
+        )
+        return [...snapshot.tasks, ...keptCompleted]
+      })
       setStatus('ready')
     } catch (err) {
       if (err instanceof PanelError && err.needsAuth) {
@@ -103,6 +119,31 @@ export function useTasks(): TasksApi {
       if (!silent) setStatus('error')
     }
   }, [])
+
+  /**
+   * Fetches completed tasks. Called when the Completed section is opened, not
+   * on load: a term's worth of them is hundreds of records across many pages.
+   */
+  const loadCompleted = useCallback(async () => {
+    if (completedLoading) return
+    setCompletedLoading(true)
+    try {
+      const completed = await send<WireTask[]>({ type: 'loadCompleted' })
+      // Defensive: a malformed response must not take the panel down. The rest
+      // of the codebase parses this way for the same reason.
+      const incoming = Array.isArray(completed) ? completed : []
+
+      setTasks((prev) => {
+        const known = new Set(prev.map((t) => t.id))
+        return [...prev, ...incoming.filter((t) => !known.has(t.id))]
+      })
+      setCompletedLoaded(true)
+    } catch (err) {
+      setError(message(err))
+    } finally {
+      setCompletedLoading(false)
+    }
+  }, [completedLoading])
 
   useEffect(() => {
     void load()
@@ -449,7 +490,10 @@ export function useTasks(): TasksApi {
     lists,
     tasks,
     undo,
+    completedLoaded,
+    completedLoading,
     load,
+    loadCompleted,
     signIn,
     dismissError: () => setError(''),
     dismissUndo: () => setUndo(null),

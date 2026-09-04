@@ -39,7 +39,7 @@ const SNAPSHOT = {
       due: '2026-09-04T00:00:00.000Z',
       position: '03',
       status: 'needsAction',
-      notes: '⟦bt⟧{"cat":"MATH 458","rec":"1w"}',
+      notes: '⟦bt⟧{"cat":"MATH 458","rec":"1w","recn":3}',
     },
   ],
 }
@@ -59,6 +59,7 @@ beforeEach(() => {
         if (request.type === 'loadBusy') return { ok: true, data: [] }
         if (request.type === 'loadBlocks') return { ok: true, data: blocks }
         if (request.type === 'scheduleTask') return { ok: true, data: { id: 'evt1' } }
+        if (request.type === 'createTask') return { ok: true, data: { id: 'created-1' } }
         if (request.type === 'loadCalendar') {
           return {
             ok: true,
@@ -131,6 +132,16 @@ const click = async (el: Element | null | undefined) => {
 const byLabel = (root: Element, label: string) =>
   root.querySelector(`[aria-label="${label}"]`)
 
+/** Selects a task and reveals the advanced fields behind the More toggle. */
+const openAdvanced = async (container: Element, title = 'Project') => {
+  const row = [...container.querySelectorAll('div[style*="cursor: pointer"]')].find((el) =>
+    el.textContent?.includes(title),
+  )
+  await click(row)
+  const more = byLabel(container, 'Show advanced fields')
+  if (more) await click(more)
+}
+
 /**
  * Types into a controlled input. Assigning `.value` directly is not enough:
  * React's value tracker sees no change and swallows the event, so the native
@@ -144,6 +155,13 @@ const setValue = (el: HTMLInputElement, value: string) => {
 
 const clear = async (el: HTMLInputElement) => {
   await act(async () => setValue(el, ''))
+}
+
+/** jsdom has no PointerEvent; the handler only reads `target`, so this suffices. */
+const pressOn = async (el: Element) => {
+  await act(async () => {
+    el.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+  })
 }
 
 const typeInto = async (el: HTMLInputElement, text: string) => {
@@ -218,7 +236,7 @@ describe('Panel interactions', () => {
 
   it('offers a category field so Class view works with a single list', async () => {
     const container = await mount()
-    await click(container.querySelector('div[style*="cursor: pointer"]'))
+    await openAdvanced(container)
 
     const field = byLabel(container, 'Class') as HTMLInputElement
     expect(field).toBeTruthy()
@@ -230,7 +248,7 @@ describe('Panel interactions', () => {
   // moved the task to a different group mid-word, unmounting the input.
   it('does not write while typing a class, only on blur', async () => {
     const container = await mount()
-    await click(container.querySelector('div[style*="cursor: pointer"]'))
+    await openAdvanced(container)
 
     const field = byLabel(container, 'Class') as HTMLInputElement
     await clear(field)
@@ -283,10 +301,41 @@ describe('Panel interactions', () => {
     expect(sent.filter((r) => r.type === 'createTask')).toHaveLength(0)
   })
 
-  it('offers a repeat control now that completion regenerates tasks', async () => {
+  it('keeps advanced fields behind More until asked for', async () => {
     const container = await mount()
     await click(container.querySelector('div[style*="cursor: pointer"]'))
+
+    // Selecting a task shows the common fields only.
+    expect(byLabel(container, 'Details')).toBeTruthy()
+    expect(byLabel(container, 'Repeat')).toBeFalsy()
+    expect(byLabel(container, 'Class')).toBeFalsy()
+
+    await click(byLabel(container, 'Show advanced fields'))
     expect(byLabel(container, 'Repeat')).toBeTruthy()
+    expect(byLabel(container, 'Class')).toBeTruthy()
+  })
+
+  it('edits the title in place on the row', async () => {
+    const container = await mount()
+    await click(container.querySelector('div[style*="cursor: pointer"]'))
+
+    const field = byLabel(container, 'Task title') as HTMLInputElement
+    expect(field).toBeTruthy()
+
+    await clear(field)
+    await typeInto(field, 'Renamed')
+    await act(async () => {
+      field.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+
+    expect(JSON.stringify(sent.filter((r) => r.type === 'patchTask'))).toContain('Renamed')
+  })
+
+  it('offers an end condition once a task repeats', async () => {
+    const container = await mount()
+    await openAdvanced(container, 'Repeating')
+
+    expect(byLabel(container, 'Recurrence end')).toBeTruthy()
   })
 
   // The API has no recurrence, so the next instance is a new task with a
@@ -298,9 +347,12 @@ describe('Panel interactions', () => {
     const created = sent.find((r) => r.type === 'createTask')
     expect(created).toBeTruthy()
     const body = JSON.stringify(created)
-    // Weekly from 4 Sep lands on 11 Sep, and the class carries over.
+    // Weekly from 4 Sep lands on 11 Sep, the class carries over, and the
+    // remaining count comes down by one.
     expect(body).toContain('2026-09-11')
     expect(body).toContain('MATH 458')
+    // The metadata block is a JSON string inside JSON, so unescape to read it.
+    expect(body.replace(/\\/g, '')).toContain('"recn":2')
   })
 
   // A native date field fires change on every segment edit, so paging from
@@ -336,7 +388,7 @@ describe('Panel interactions', () => {
 
   it('falls back to the hashed palette when the calendar has no match', async () => {
     const container = await mount()
-    await click(container.querySelector('div[style*="cursor: pointer"]'))
+    await openAdvanced(container)
 
     const field = byLabel(container, 'Class') as HTMLInputElement
     // A category with no course event still gets a stable colour.
@@ -389,10 +441,27 @@ describe('Panel interactions', () => {
     expect(container.textContent).not.toContain('▦')
   })
 
+  it('keeps search behind an icon until asked for', async () => {
+    const container = await mount()
+    expect(byLabel(container, 'Search tasks')).toBeFalsy()
+
+    await click(byLabel(container, 'Search'))
+    expect(byLabel(container, 'Search tasks')).toBeTruthy()
+  })
+
+  it('opens search from the keyboard', async () => {
+    const container = await mount()
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true }))
+    })
+    expect(byLabel(container, 'Search tasks')).toBeTruthy()
+  })
+
   it('filters the list by search', async () => {
     const container = await mount()
     expect(container.textContent).toContain('No date')
 
+    await click(byLabel(container, 'Search'))
     await typeInto(byLabel(container, 'Search tasks') as HTMLInputElement, 'project')
     expect(container.textContent).toContain('Project')
     expect(container.textContent).not.toContain('No date')
@@ -400,6 +469,7 @@ describe('Panel interactions', () => {
 
   it('searches notes and class as well as titles', async () => {
     const container = await mount()
+    await click(byLabel(container, 'Search'))
     await typeInto(byLabel(container, 'Search tasks') as HTMLInputElement, 'math')
     expect(container.textContent).toContain('Project')
   })
@@ -421,17 +491,33 @@ describe('Panel interactions', () => {
     expect(sent.filter((r) => r.type === 'patchTask').length).toBeGreaterThan(1)
   })
 
-  it('closes the editor when focus leaves it', async () => {
+  // Closing used to depend on focus having been inside the editor, so it fired
+  // inconsistently. A pointer press outside is unambiguous.
+  it('closes the editor on a press outside it', async () => {
     const container = await mount()
     await click(container.querySelector('div[style*="cursor: pointer"]'))
     expect(byLabel(container, 'Details')).toBeTruthy()
 
-    const editor = byLabel(container, 'Title')!.parentElement!
-    await act(async () => {
-      editor.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
-    })
-
+    await pressOn(document.body)
     expect(byLabel(container, 'Details')).toBeFalsy()
+  })
+
+  it('stays open when the press lands inside the editor', async () => {
+    const container = await mount()
+    await click(container.querySelector('div[style*="cursor: pointer"]'))
+
+    await pressOn(byLabel(container, 'Details')!)
+    expect(byLabel(container, 'Details')).toBeTruthy()
+  })
+
+  // The title field lives on the row, not inside the editor, so a focus-based
+  // close treated clicking into it as leaving.
+  it('stays open when the press lands on the title field', async () => {
+    const container = await mount()
+    await click(container.querySelector('div[style*="cursor: pointer"]'))
+
+    await pressOn(byLabel(container, 'Task title')!)
+    expect(byLabel(container, 'Details')).toBeTruthy()
   })
 
   // A subtask of a MATH 458 project is MATH 458 work, whether or not anyone
@@ -491,6 +577,57 @@ describe('Panel interactions', () => {
     expect(sent.some((r) => r.type === 'createTask')).toBe(false)
   })
 
+  // A new task sorts into a bucket that may be off-screen, so without moving
+  // the cursor to it, adding a task can look like nothing happened.
+  it('moves the cursor to the created task, using the server id', async () => {
+    const container = await mount()
+
+    const field = byLabel(container, 'Add a task') as HTMLInputElement
+    await typeInto(field, 'new thing')
+    await act(async () => {
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+
+    // 'created-1' is what the fake worker returns; the optimistic row used a
+    // temporary `pending-` id that no longer exists after the reload.
+    const focused = container.querySelector('[style*="dashed"], [style*="solid"]')
+    expect(focused).toBeTruthy()
+    expect(sent.some((r) => r.type === 'createTask')).toBe(true)
+  })
+
+  // Google's sidebar reads in the order things were added; inserting at the
+  // top of the list instead makes an undated list read newest-first.
+  it('appends new tasks after the existing ones', async () => {
+    const container = await mount()
+
+    const field = byLabel(container, 'Add a task') as HTMLInputElement
+    await typeInto(field, 'new thing')
+    await act(async () => {
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+
+    const created = sent.find((r) => r.type === 'createTask')
+    // Placed after the last existing sibling rather than at the top.
+    expect(created).toHaveProperty('previous')
+  })
+
+  // Closing shifts the layout, so relying on the follow-up click to land on
+  // the intended row does not work.
+  it('switches directly from one task to another', async () => {
+    const container = await mount()
+
+    const rows = [...container.querySelectorAll('[data-task-id]')]
+    await click(rows[0]!.querySelector('div[style*="cursor: pointer"]'))
+    expect(byLabel(container, 'Details')).toBeTruthy()
+
+    const other = rows.find((r) => r.getAttribute('data-task-id') === 'n')!
+    await pressOn(other)
+
+    // Still open, now on the other task.
+    expect(byLabel(container, 'Details')).toBeTruthy()
+    expect((byLabel(container, 'Task title') as HTMLInputElement).value).toBe('No date')
+  })
+
   it('creates one subtask per line when a list is pasted', async () => {
     const container = await mount()
     await click(container.querySelector('div[style*="cursor: pointer"]'))
@@ -534,6 +671,25 @@ describe('Panel interactions', () => {
 
     const created = sent.find((r) => r.type === 'createTask')
     expect(created).toMatchObject({ parent: 'p' })
+  })
+
+  it('offers a Today view that hides everything not yet due', async () => {
+    const container = await mount()
+    await click(byLabel(container, 'Today'))
+
+    // Only overdue and due-today work; Sep 30 and the undated task are gone.
+    expect(container.textContent).not.toContain('Project')
+    expect(container.textContent).not.toContain('No date')
+  })
+
+  it('offers a locale-formatted due time rather than a segmented field', async () => {
+    const container = await mount()
+    await click(container.querySelector('div[style*="cursor: pointer"]'))
+
+    const time = byLabel(container, 'Due time') as HTMLSelectElement
+    expect(time.tagName).toBe('SELECT')
+    // Half-hourly choices plus "no time" and an explicit end-of-day option.
+    expect(time.options.length).toBeGreaterThan(40)
   })
 
   it('shows drag handles when a group holds one list', async () => {

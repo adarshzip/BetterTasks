@@ -6,27 +6,34 @@ import type { Theme } from './theme'
 /**
  * Drag wrapper for a task row.
  *
- * The handle is deliberately separate from the row body: the row is clickable
- * to open the editor, and making the whole row draggable would make every
- * click feel like a failed drag.
+ * The whole row is draggable, not just the handle. The pointer sensor's 4px
+ * activation distance keeps a plain click from registering as a drag, so
+ * clicking to select still works. The handle stays as an affordance.
+ *
+ * Dragging is suppressed while the row is selected, because the title is an
+ * editable field then and selecting text should not drag the task.
  */
 export function SortableRow({
   id,
   theme,
+  disabled,
   children,
 }: {
   id: string
   theme: Theme
+  disabled?: boolean
   children: ReactNode
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
+    disabled: !!disabled,
   })
   const [hover, setHover] = useState(false)
 
   return (
     <div
       ref={setNodeRef}
+      {...(disabled ? {} : listeners)}
       onPointerEnter={() => setHover(true)}
       onPointerLeave={() => setHover(false)}
       style={{
@@ -41,12 +48,11 @@ export function SortableRow({
     >
       <button
         {...attributes}
-        {...listeners}
         aria-label="Reorder"
         title="Drag to reorder, drag right to nest"
         style={{
           all: 'unset',
-          cursor: isDragging ? 'grabbing' : 'grab',
+          cursor: disabled ? 'default' : isDragging ? 'grabbing' : 'grab',
           touchAction: 'none',
           width: 18,
           flexShrink: 0,

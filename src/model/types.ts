@@ -43,6 +43,10 @@ export interface TaskMeta {
   defer?: string
   /** Recurrence interval, e.g. "1w", "2w", "1d". Regenerated on completion. */
   rec?: string
+  /** Recurrence stops after this date, YYYY-MM-DD. */
+  recu?: string
+  /** Recurrences remaining, counting the current one. */
+  recn?: number
   /** Time of day the task is due, HH:MM, if the API truncated it off `due`. */
   time?: string
   /**

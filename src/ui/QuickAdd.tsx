@@ -118,6 +118,9 @@ export function QuickAdd({
         )}
       </div>
 
+      {/* Fixed height so the list below does not jump as the preview appears
+          and disappears with each keystroke. */}
+      <div style={{ minHeight: 18 }}>
       {active && (
         <div
           aria-label="Nesting target"
@@ -134,6 +137,7 @@ export function QuickAdd({
       )}
 
       {parsed && <Preview parsed={parsed} theme={theme} colourOf={colourOf} />}
+      </div>
     </div>
   )
 }

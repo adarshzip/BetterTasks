@@ -1,12 +1,33 @@
 import type { GTaskList, Task, TaskNode } from './types'
 import { buildTree } from './tree'
 
-export type ViewMode = 'due' | 'category'
+export type ViewMode = 'due' | 'category' | 'today'
 
 export interface Group {
   key: string
   label: string
   nodes: TaskNode[]
+  /** Remaining effort in the group, in minutes. Excludes completed work. */
+  effort: number
+}
+
+/**
+ * Sums estimated effort across a set of trees, ignoring completed tasks.
+ *
+ * Completed work is excluded deliberately: the number is meant to answer "how
+ * much is left", so counting finished tasks would make a group look heavier
+ * the more of it you got done.
+ */
+export function remainingEffort(nodes: TaskNode[]): number {
+  let total = 0
+  const visit = (items: TaskNode[]): void => {
+    for (const node of items) {
+      if (!node.completed && node.meta.eff) total += node.meta.eff
+      visit(node.children)
+    }
+  }
+  visit(nodes)
+  return total
 }
 
 /**
@@ -40,18 +61,42 @@ export function knownCategories(tasks: Task[], lists: GTaskList[]): string[] {
  * display time rather than written to the task, so re-parenting a subtask or
  * changing the parent's class updates the child with no writes.
  */
+export interface ResolvedCategory {
+  category: string
+  /**
+   * Whether the task was actually assigned to a class, rather than falling
+   * back to its list name. An untagged task in the default list has a
+   * category only in the sense that everything does, and labelling it with a
+   * pill says nothing.
+   */
+  tagged: boolean
+}
+
 export function resolveCategories(
   roots: TaskNode[],
   listTitles: Map<string, string>,
-): Map<string, string> {
-  const resolved = new Map<string, string>()
+  defaultListId?: string,
+): Map<string, ResolvedCategory> {
+  const resolved = new Map<string, ResolvedCategory>()
 
-  const visit = (nodes: TaskNode[], inherited: string | null): void => {
+  const visit = (nodes: TaskNode[], inherited: ResolvedCategory | null): void => {
     for (const node of nodes) {
-      // An explicit class always wins over an inherited one.
-      const category = node.meta.cat ?? inherited ?? listTitles.get(node.listId) ?? 'Other'
-      resolved.set(node.raw.id, category)
-      visit(node.children, category)
+      // An explicit class always wins over an inherited one. A list other than
+      // the default counts as tagged: that is the one-list-per-class setup.
+      const own = node.meta.cat
+      const fromList = !!defaultListId && node.listId !== defaultListId
+
+      const entry: ResolvedCategory = own
+        ? { category: own, tagged: true }
+        : inherited
+          ? inherited
+          : {
+              category: listTitles.get(node.listId) ?? 'Other',
+              tagged: fromList,
+            }
+
+      resolved.set(node.raw.id, entry)
+      visit(node.children, entry)
     }
   }
 
@@ -124,6 +169,9 @@ export function groupTasks(
   // and not yet past due. The due view is strictly what is still outstanding.
   const defaultListId = lists[0]?.id
   const keepCompleted = mode === 'category'
+  // The today view answers "what am I doing now", so it collapses to a single
+  // group of everything already due, with no bucketing at all.
+  const flat = mode === 'today'
   const active = tasks.filter(
     (t) =>
       !t.completed ||
@@ -149,6 +197,9 @@ export function groupTasks(
       continue
     }
 
+    // Anything not already due is not part of today.
+    if (flat) continue
+
     const { key, label } =
       mode === 'category'
         ? categoryKey(root, listTitles)
@@ -163,6 +214,7 @@ export function groupTasks(
     .map(([key, bucket]) => ({
       key,
       label: bucket.label,
+      effort: remainingEffort(bucket.nodes),
       // Inside a bucket, order by when things are actually due. Manual order
       // is only a tiebreaker: a view organised by due date that lists Friday
       // above Monday is answering the wrong question.

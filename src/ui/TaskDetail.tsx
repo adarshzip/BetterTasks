@@ -4,6 +4,7 @@ import type { Theme } from './theme'
 import type { TasksApi } from '@/state/useTasks'
 import { parseDateInput, toDateInput } from '@/model/dates'
 import { canOutdent, indentTarget, neighbourFor } from '@/state/mutations'
+import { TimeSelect } from './TimeSelect'
 
 /**
  * The expanded editor for a single task.
@@ -19,6 +20,8 @@ interface Props {
   theme: Theme
   api: TasksApi
   scheduled: boolean
+  showMore: boolean
+  onToggleMore: (next: boolean) => void
   onSchedule: () => void
   onAddSubtask: () => void
   onClose: () => void
@@ -31,6 +34,8 @@ export function TaskDetail({
   theme,
   api,
   scheduled,
+  showMore,
+  onToggleMore,
   onSchedule,
   onAddSubtask,
   onClose,
@@ -38,9 +43,6 @@ export function TaskDetail({
   const id = node.raw.id
 
   // Text fields commit on blur or Enter, never per keystroke.
-  const title = useDraft(node.title, (next) => {
-    if (next.trim()) void api.editTask(id, { title: next.trim() })
-  })
   const notes = useDraft(node.notes, (next) => void api.editTask(id, { notes: next }))
   const category = useDraft(node.meta.cat, (next) =>
     void api.setMeta(id, { cat: next.trim() || undefined }),
@@ -57,28 +59,22 @@ export function TaskDetail({
   const dueDate = useDraft(toDateInput(node.due), (next) =>
     void api.setDue(id, parseDateInput(next), node.meta.time),
   )
-  const dueTime = useDraft(node.meta.time, (next) => void api.setDue(id, node.due, next || null))
   const startDate = useDraft(node.meta.defer, (next) =>
     void api.setMeta(id, { defer: next || undefined }),
+  )
+  const endDate = useDraft(node.meta.recu, (next) =>
+    void api.setMeta(id, { recu: next || undefined }),
+  )
+  const endCount = useDraft(node.meta.recn, (next) =>
+    void api.setMeta(id, { recn: next ? Number(next) : undefined }),
   )
 
   const canIndent = indentTarget(api.tasks, id) !== null
   const canUp = neighbourFor(api.tasks, id, 'up') !== null
   const canDown = neighbourFor(api.tasks, id, 'down') !== null
 
-  /**
-   * Closes once the edit is finished: Enter, or focus leaving the editor
-   * entirely. Tabbing between fields inside it must not close it, which is why
-   * this checks where focus actually went rather than just reacting to blur.
-   */
-  const handleBlur = (event: React.FocusEvent<HTMLDivElement>): void => {
-    const next = event.relatedTarget as Node | null
-    if (!next || !event.currentTarget.contains(next)) onClose()
-  }
-
   return (
     <div
-      onBlur={handleBlur}
       onKeyDown={(event) => {
         if (event.key === 'Enter' && !event.shiftKey && event.target instanceof HTMLInputElement) {
           // The field's own handler commits on blur; closing after that lands
@@ -99,8 +95,6 @@ export function TaskDetail({
         gap: 8,
       }}
     >
-      <input {...title} aria-label="Title" style={inputStyle(theme)} />
-
       <textarea
         {...notes}
         aria-label="Details"
@@ -116,12 +110,11 @@ export function TaskDetail({
           aria-label="Due date"
           style={{ ...inputStyle(theme), flex: 1 }}
         />
-        <input
-          {...dueTime}
-          type="time"
-          aria-label="Due time"
+        <TimeSelect
+          theme={theme}
+          value={node.meta.time}
           disabled={!node.due}
-          style={{ ...inputStyle(theme), width: 100 }}
+          onChange={(next) => void api.setDue(id, node.due, next)}
         />
       </Field>
 
@@ -138,82 +131,132 @@ export function TaskDetail({
         </Action>
       </Field>
 
+      {showMore && (
+        <>
       <Field label="Class" theme={theme}>
-        <input
-          {...category}
-          list="bt-categories"
-          aria-label="Class"
-          placeholder={listTitle(lists, node.listId)}
-          style={{ ...inputStyle(theme), flex: 1 }}
-        />
-        {/* Existing categories as suggestions, without restricting to them. */}
-        <datalist id="bt-categories">
-          {categories.map((category) => (
-            <option key={category} value={category} />
-          ))}
-        </datalist>
-      </Field>
+            <input
+              {...category}
+              list="bt-categories"
+              aria-label="Class"
+              placeholder={listTitle(lists, node.listId)}
+              style={{ ...inputStyle(theme), flex: 1 }}
+            />
+            {/* Existing categories as suggestions, without restricting to them. */}
+            <datalist id="bt-categories">
+              {categories.map((category) => (
+                <option key={category} value={category} />
+              ))}
+            </datalist>
+          </Field>
 
-      <Field label="List" theme={theme}>
-        <select
-          aria-label="List"
-          value={node.listId}
-          onChange={(e) => void api.moveToList(id, e.target.value)}
-          style={{ ...inputStyle(theme), flex: 1 }}
-        >
-          {lists.map((list) => (
-            <option key={list.id} value={list.id}>
-              {list.title}
-            </option>
-          ))}
-        </select>
-      </Field>
+          <Field label="List" theme={theme}>
+            <select
+              aria-label="List"
+              value={node.listId}
+              onChange={(e) => void api.moveToList(id, e.target.value)}
+              style={{ ...inputStyle(theme), flex: 1 }}
+            >
+              {lists.map((list) => (
+                <option key={list.id} value={list.id}>
+                  {list.title}
+                </option>
+              ))}
+            </select>
+          </Field>
 
-      <Field label="Effort" theme={theme}>
-        <input
-          {...effort}
-          type="number"
-          min={0}
-          step={15}
-          aria-label="Effort in minutes"
-          placeholder="minutes"
-          style={{ ...inputStyle(theme), width: 90 }}
-        />
-        <select
-          aria-label="Priority"
-          value={node.meta.pri ?? ''}
-          onChange={(e) =>
-            void api.setMeta(id, { pri: e.target.value ? Number(e.target.value) : undefined })
-          }
-          style={{ ...inputStyle(theme), flex: 1 }}
-        >
-          <option value="">No priority</option>
-          <option value="1">High</option>
-          <option value="2">Medium</option>
-          <option value="3">Low</option>
-        </select>
-      </Field>
+          <Field label="Effort" theme={theme}>
+            <input
+              {...effort}
+              type="number"
+              min={0}
+              step={15}
+              aria-label="Effort in minutes"
+              placeholder="minutes"
+              style={{ ...inputStyle(theme), width: 90 }}
+            />
+            <select
+              aria-label="Priority"
+              value={node.meta.pri ?? ''}
+              onChange={(e) =>
+                void api.setMeta(id, { pri: e.target.value ? Number(e.target.value) : undefined })
+              }
+              style={{ ...inputStyle(theme), flex: 1 }}
+            >
+              <option value="">No priority</option>
+              <option value="1">High</option>
+              <option value="2">Medium</option>
+              <option value="3">Low</option>
+            </select>
+          </Field>
 
-      <Field label="Start" theme={theme}>
-        <input
-          {...startDate}
-          type="date"
-          aria-label="Show from"
-          style={{ ...inputStyle(theme), flex: 1 }}
-        />
-        <select
-          aria-label="Repeat"
-          value={node.meta.rec ?? ''}
-          onChange={(e) => void api.setMeta(id, { rec: e.target.value || undefined })}
-          style={{ ...inputStyle(theme), width: 110 }}
-        >
-          <option value="">No repeat</option>
-          <option value="1d">Daily</option>
-          <option value="1w">Weekly</option>
-          <option value="2w">Fortnightly</option>
-          <option value="1m">Monthly</option>
-        </select>
-      </Field>
+          <Field label="Start" theme={theme}>
+            <input
+              {...startDate}
+              type="date"
+              aria-label="Show from"
+              style={{ ...inputStyle(theme), flex: 1 }}
+            />
+            <select
+              aria-label="Repeat"
+              value={node.meta.rec ?? ''}
+              onChange={(e) => void api.setMeta(id, { rec: e.target.value || undefined })}
+              style={{ ...inputStyle(theme), width: 110 }}
+            >
+              <option value="">No repeat</option>
+              <option value="1d">Daily</option>
+              <option value="1w">Weekly</option>
+              <option value="2w">Fortnightly</option>
+              <option value="1m">Monthly</option>
+            </select>
+          </Field>
+
+          {node.meta.rec && (
+            <Field label="Ends" theme={theme}>
+              <select
+                aria-label="Recurrence end"
+                value={endMode(node.meta)}
+                onChange={(e) => {
+                  // Switching mode clears the other field, so the two end
+                  // conditions can never both be set and disagree.
+                  if (e.target.value === 'never') {
+                    void api.setMeta(id, { recu: undefined, recn: undefined })
+                  }
+                  if (e.target.value === 'on') {
+                    void api.setMeta(id, { recu: toDateInput(new Date()), recn: undefined })
+                  }
+                  if (e.target.value === 'after') {
+                    void api.setMeta(id, { recn: 5, recu: undefined })
+                  }
+                }}
+                style={{ ...inputStyle(theme), width: 90 }}
+              >
+                <option value="never">Never</option>
+                <option value="on">On date</option>
+                <option value="after">After</option>
+              </select>
+
+              {endMode(node.meta) === 'on' && (
+                <input
+                  {...endDate}
+                  type="date"
+                  aria-label="Repeat until"
+                  style={{ ...inputStyle(theme), flex: 1 }}
+                />
+              )}
+
+              {endMode(node.meta) === 'after' && (
+                <input
+                  {...endCount}
+                  type="number"
+                  min={1}
+                  aria-label="Occurrences remaining"
+                  style={{ ...inputStyle(theme), width: 70 }}
+                />
+              )}
+            </Field>
+          )}
+        </>
+      )}
 
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
         <Action theme={theme} disabled={!canIndent} onClick={() => void api.indent(id)} title="Indent">
@@ -239,6 +282,14 @@ export function TaskDetail({
           ↓
         </Action>
 
+        <Action
+          theme={theme}
+          onClick={() => onToggleMore(!showMore)}
+          title={showMore ? 'Hide advanced fields' : 'Show advanced fields'}
+        >
+          {showMore ? 'Less' : 'More'}
+        </Action>
+
         <span style={{ flex: 1 }} />
 
         <Action theme={theme} onClick={onSchedule} title="Schedule work time">
@@ -261,6 +312,13 @@ export function TaskDetail({
       </div>
     </div>
   )
+}
+
+/** Which end condition is active; the two are mutually exclusive. */
+function endMode(meta: { recu?: string; recn?: number }): 'never' | 'on' | 'after' {
+  if (meta.recn !== undefined) return 'after'
+  if (meta.recu) return 'on'
+  return 'never'
 }
 
 /** Shown as the placeholder, since an empty category falls back to the list. */

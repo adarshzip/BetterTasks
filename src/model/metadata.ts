@@ -64,6 +64,8 @@ function parseMeta(payload: string): TaskMeta {
   if (isPositiveInt(raw.pri)) meta.pri = raw.pri
   if (isIsoDate(raw.defer)) meta.defer = raw.defer
   if (typeof raw.rec === 'string' && /^\d+[dwm]$/.test(raw.rec)) meta.rec = raw.rec
+  if (isIsoDate(raw.recu)) meta.recu = raw.recu
+  if (isPositiveInt(raw.recn)) meta.recn = raw.recn
   if (isClockTime(raw.time)) meta.time = raw.time
   if (typeof raw.ev === 'string' && raw.ev) meta.ev = raw.ev
   if (isTimestamp(raw.evs)) meta.evs = raw.evs
@@ -111,6 +113,8 @@ function compactMeta(meta: MetaPatch): TaskMeta {
   if (isPositiveInt(meta.pri)) out.pri = meta.pri
   if (isIsoDate(meta.defer)) out.defer = meta.defer
   if (meta.rec && /^\d+[dwm]$/.test(meta.rec)) out.rec = meta.rec
+  if (isIsoDate(meta.recu)) out.recu = meta.recu
+  if (isPositiveInt(meta.recn)) out.recn = meta.recn
   if (isClockTime(meta.time)) out.time = meta.time
   if (meta.ev) out.ev = meta.ev
   if (isTimestamp(meta.evs)) out.evs = meta.evs

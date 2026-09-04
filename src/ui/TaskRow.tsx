@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react'
+import { useDraft } from './Draft'
 import type { TaskNode } from '@/model/types'
 import type { Theme } from './theme'
 import { progressOf } from '@/model/tree'
+import { describeEnd } from '@/model/recurrence'
 
 /** Width of one nesting level, and of the connector gutter beside it. */
 export const INDENT = 20
@@ -24,6 +26,10 @@ interface Props {
   onToggleCollapse: (id: string) => void
   onToggleComplete: (id: string, completed: boolean) => void
   onSelect: (id: string, range: boolean) => void
+  /** Briefly highlighted, so a newly created task is visibly located. */
+  flash: boolean
+  onRename: (id: string, title: string) => void
+  onDone: () => void
 }
 
 export function TaskRow({
@@ -42,6 +48,9 @@ export function TaskRow({
   onToggleCollapse,
   onToggleComplete,
   onSelect,
+  flash,
+  onRename,
+  onDone,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
 
@@ -51,6 +60,15 @@ export function TaskRow({
   useEffect(() => {
     if (focused) ref.current?.scrollIntoView?.({ block: 'nearest' })
   }, [focused])
+
+  /**
+   * The title is editable in place while the row is selected. Google Tasks
+   * does the same, and it is the difference between renaming a task and
+   * opening a ten-field form to rename a task.
+   */
+  const title = useDraft(node.title, (next) => {
+    if (next.trim()) onRename(node.raw.id, next.trim())
+  })
 
   const progress = progressOf(node)
   const hasChildren = node.children.length > 0
@@ -68,7 +86,14 @@ export function TaskRow({
         paddingInlineStart: 8 + node.depth * INDENT,
         borderRadius: 6,
         position: 'relative',
-        background: inSelection ? `${theme.accent}22` : selected ? theme.surface : 'transparent',
+        background: flash
+          ? `${theme.accent}33`
+          : inSelection
+            ? `${theme.accent}22`
+            : selected
+              ? theme.surface
+              : 'transparent',
+        transition: 'background 400ms',
         outline: dragging
           ? `1px dashed ${theme.accent}`
           : focused
@@ -124,17 +149,39 @@ export function TaskRow({
         onClick={(event) => onSelect(node.raw.id, event.shiftKey)}
         style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}
       >
-        <div
-          style={{
-            color: node.completed ? theme.muted : theme.text,
-            textDecoration: node.completed ? 'line-through' : 'none',
-            fontSize: 13,
-            lineHeight: '18px',
-            wordBreak: 'break-word',
-          }}
-        >
-          {node.title || '(untitled)'}
-        </div>
+        {selected ? (
+          <input
+            {...title}
+            autoFocus
+            aria-label="Task title"
+            onKeyDown={(event) => {
+              title.onKeyDown(event)
+              // Enter commits through the draft's own handler, then closes.
+              if (event.key === 'Enter' && !event.shiftKey) onDone()
+            }}
+            style={{
+              all: 'unset',
+              boxSizing: 'border-box',
+              width: '100%',
+              fontSize: 13,
+              lineHeight: '18px',
+              color: theme.text,
+              borderBottom: `1px solid ${theme.accent}66`,
+            }}
+          />
+        ) : (
+          <div
+            style={{
+              color: node.completed ? theme.muted : theme.text,
+              textDecoration: node.completed ? 'line-through' : 'none',
+              fontSize: 13,
+              lineHeight: '18px',
+              wordBreak: 'break-word',
+            }}
+          >
+            {node.title || '(untitled)'}
+          </div>
+        )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, flexWrap: 'wrap' }}>
           {showCategory && <Pill label={category} color={categoryColour} />}
@@ -163,7 +210,12 @@ export function TaskRow({
             <span style={{ fontSize: 11, color: theme.accent }}>▦ {formatBlock(block.start)}</span>
           )}
 
-          {node.meta.rec && <span style={{ fontSize: 11, color: theme.muted }}>↻ {node.meta.rec}</span>}
+          {node.meta.rec && (
+            <span style={{ fontSize: 11, color: theme.muted }}>
+              ↻ {node.meta.rec}
+              {describeEnd(node.meta) ? `, ${describeEnd(node.meta)}` : ''}
+            </span>
+          )}
 
           {progress.total > 0 && (
             <Progress done={progress.done} total={progress.total} theme={theme} />

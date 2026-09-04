@@ -110,11 +110,21 @@ export async function clearCompleted(listId: string): Promise<void> {
   await apiFetch<void>(`${BASE}/lists/${encodeURIComponent(listId)}/clear`, { method: 'POST' })
 }
 
-export async function createTask(listId: string, task: Partial<GTask>, parent?: string): Promise<GTask> {
+/**
+ * `previous` places the new task after an existing sibling. Without it Google
+ * inserts at the top of the list, which makes an undated list read newest
+ * first; appending keeps creation order, matching the native sidebar.
+ */
+export async function createTask(
+  listId: string,
+  task: Partial<GTask>,
+  parent?: string,
+  previous?: string,
+): Promise<GTask> {
   return apiFetch<GTask>(`${BASE}/lists/${encodeURIComponent(listId)}/tasks`, {
     method: 'POST',
     body: task,
-    query: { parent },
+    query: { parent, previous },
   })
 }
 

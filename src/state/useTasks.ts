@@ -3,13 +3,14 @@ import type { GTask, GTaskList, WireTask } from '@/model/types'
 import type { Snapshot } from '@/background/messages'
 import { send, PanelError } from '@/lib/messaging'
 import { decodeNotes, encodeNotes, withMeta, type MetaPatch } from '@/model/metadata'
-import { addInterval, encodeDue } from '@/model/dates'
+import { encodeDue } from '@/model/dates'
+import { nextOccurrence } from '@/model/recurrence'
 import {
   applyMutation,
   indentTarget,
   inverseOf,
+  LAST_POSITION,
   neighbourFor,
-  positionAt,
   type Mutation,
 } from './mutations'
 
@@ -51,17 +52,19 @@ export interface TasksApi {
   dismissUndo: () => void
   runUndo: () => Promise<void>
 
+  /** Resolves to the created task's real id, or null if the request failed. */
   createTask: (
     listId: string,
     title: string,
     parent?: string,
     extras?: { due?: Date; time?: string; category?: string; eff?: number; pri?: number },
-  ) => Promise<void>
+  ) => Promise<string | null>
   createTasks: (listId: string, titles: string[], parent?: string) => Promise<void>
   setCompleted: (id: string, completed: boolean) => Promise<void>
   editTask: (id: string, fields: { title?: string; notes?: string }) => Promise<void>
   setDue: (id: string, date: Date | null, time?: string | null) => Promise<void>
   snooze: (id: string, days: number) => Promise<void>
+  carryOverdueForward: (ids: string[]) => Promise<void>
   setMeta: (id: string, patch: MetaPatch) => Promise<void>
   removeTask: (id: string) => Promise<void>
   indent: (id: string) => Promise<void>
@@ -196,9 +199,9 @@ export function useTasks(): TasksApi {
       title: string,
       parent?: string,
       extras?: { due?: Date; time?: string; category?: string; eff?: number; pri?: number },
-    ) => {
+    ): Promise<string | null> => {
       const trimmed = title.trim()
-      if (!trimmed) return
+      if (!trimmed) return null
 
       // Quick-add extras become a metadata block and a due date on creation,
       // so the task is complete on its first write rather than patched after.
@@ -211,27 +214,43 @@ export function useTasks(): TasksApi {
       })
 
       // A temporary id keeps React keys stable until the reload replaces it.
+      // Append rather than insert at the top, so an undated list reads in the
+      // order things were added, like the native sidebar.
+      const siblings = current.current
+        .filter((t) => t.listId === listId && (t.parent ?? null) === (parent ?? null))
+        .sort((a, b) => (a.position ?? '').localeCompare(b.position ?? ''))
+      const previous = siblings.at(-1)?.id
+
       const task: WireTask = {
         id: `pending-${crypto.randomUUID()}`,
         title: trimmed,
         listId,
         status: 'needsAction',
-        position: positionAt(0),
+        position: LAST_POSITION,
         ...(parent ? { parent } : {}),
         ...(due ? { due } : {}),
         ...(notes ? { notes } : {}),
       }
 
+      // The server's id is what everything downstream needs: the optimistic
+      // row is replaced by the reload, so anything keyed to the temporary
+      // `pending-` id would point at a row that no longer exists.
+      let created: string | null = null
+
       await run({ type: 'create', task }, async () => {
-        await send({
+        const response = await send<{ id?: string }>({
           type: 'createTask',
           listId,
           task: { title: trimmed, ...(due ? { due } : {}), ...(notes ? { notes } : {}) },
           ...(parent ? { parent } : {}),
+          ...(previous ? { previous } : {}),
         })
+        created = response?.id ?? null
         // The server assigns the real id and position, so reconcile quietly.
         await load({ silent: true })
       })
+
+      return created
     },
     [run, load],
   )
@@ -245,15 +264,25 @@ export function useTasks(): TasksApi {
    */
   const createTasks = useCallback(
     async (listId: string, titles: string[], parent?: string) => {
+      // Each new task is placed after the previous one, so a pasted list keeps
+      // the order it was pasted in rather than arriving reversed.
+      let previous = current.current
+        .filter((t) => t.listId === listId && (t.parent ?? null) === (parent ?? null))
+        .sort((a, b) => (a.position ?? '').localeCompare(b.position ?? ''))
+        .at(-1)?.id
+
       for (const title of titles) {
         const trimmed = title.trim()
         if (!trimmed) continue
-        await send({
+
+        const created = await send<{ id?: string }>({
           type: 'createTask',
           listId,
           task: { title: trimmed },
           ...(parent ? { parent } : {}),
+          ...(previous ? { previous } : {}),
         })
+        previous = created?.id ?? previous
       }
       await load({ silent: true })
     },
@@ -285,20 +314,30 @@ export function useTasks(): TasksApi {
     async (id: string) => {
       const task = find(id)
       const { body, meta } = decodeNotes(task?.notes)
-      if (!task || !meta.rec || !task.due) return
+      if (!task || !task.due) return
 
-      const next = addInterval(new Date(task.due), meta.rec)
-      const { due } = encodeDue(
-        new Date(next.getUTCFullYear(), next.getUTCMonth(), next.getUTCDate()),
-        meta.time ?? null,
+      // Due values are UTC midnight, so read the calendar date back out of
+      // them before doing any date arithmetic.
+      const current = new Date(task.due)
+      const next = nextOccurrence(
+        new Date(current.getUTCFullYear(), current.getUTCMonth(), current.getUTCDate()),
+        meta,
       )
+      // Null means the recurrence has ended, by date or by count.
+      if (!next) return
+
+      const { due } = encodeDue(next.due, meta.time ?? null)
 
       await send({
         type: 'createTask',
         listId: task.listId,
         // The metadata carries over, so the next instance keeps its class,
-        // effort, and its own recurrence.
-        task: { title: task.title ?? '', notes: encodeNotes(body, meta), ...(due ? { due } : {}) },
+        // effort, and the rest of its recurrence.
+        task: {
+          title: task.title ?? '',
+          notes: encodeNotes(body, next.meta),
+          ...(due ? { due } : {}),
+        },
       })
       await load({ silent: true })
     },
@@ -378,6 +417,19 @@ export function useTasks(): TasksApi {
       await setDue(id, base, meta.time ?? null)
     },
     [find, setDue],
+  )
+
+  /**
+   * Moves a set of overdue tasks to today.
+   *
+   * This is the Monday-morning ritual done by hand otherwise. Sequential, like
+   * the other bulk paths, because the Tasks API rate-limits readily.
+   */
+  const carryOverdueForward = useCallback(
+    async (ids: string[]) => {
+      for (const id of ids) await snooze(id, 0)
+    },
+    [snooze],
   )
 
   const setMeta = useCallback(
@@ -583,6 +635,7 @@ export function useTasks(): TasksApi {
     editTask,
     setDue,
     snooze,
+    carryOverdueForward,
     setMeta,
     removeTask,
     indent,

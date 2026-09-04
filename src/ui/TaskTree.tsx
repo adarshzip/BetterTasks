@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useCallback, useRef, useState } from 'react'
 import {
   DndContext,
   PointerSensor,
@@ -21,6 +21,7 @@ import { TaskDetail } from './TaskDetail'
 import { SortableRow } from './SortableRow'
 import { ScheduleDialog } from './ScheduleDialog'
 import { SubtaskComposer } from './SubtaskComposer'
+import { useClickOutside } from './useClickOutside'
 import type { Interval } from '@/model/schedule'
 
 interface Props {
@@ -37,6 +38,9 @@ interface Props {
   busy: Interval[]
   blocks: Map<string, { eventId: string; start: Date; end: Date }>
   atRisk: (node: TaskNode) => boolean
+  flashId: string | null
+  showMore: boolean
+  onToggleMore: (next: boolean) => void
   schedulingId: string | null
   onStartScheduling: (id: string | null) => void
   onSchedule: (node: TaskNode, slot: Interval) => void
@@ -62,6 +66,9 @@ export function TaskTree({
   busy,
   blocks,
   atRisk,
+  flashId,
+  showMore,
+  onToggleMore,
   schedulingId,
   onStartScheduling,
   onSchedule,
@@ -77,10 +84,36 @@ export function TaskTree({
   const listTitles = new Map(lists.map((l) => [l.id, l.title ?? 'Untitled']))
   const rows = flattenTree(nodes, collapsed)
 
+  // The selected row and its editor, treated as one group for click-outside.
+  //
+  // Only the section that actually holds the selected row may listen. Every
+  // section receives the same `selectedId`, so without this check the other
+  // sections run the handler with an empty ref, decide the press was outside,
+  // and close the editor the instant it opens.
+  const editorRef = useRef<HTMLDivElement>(null)
+
+  /**
+   * A press outside the editor closes it. If that press landed on another
+   * task, open that one instead: closing first and relying on the subsequent
+   * click does not work, because removing the editor shifts the layout out
+   * from under the pointer before the click resolves.
+   */
+  const closeEditor = useCallback(
+    (target: Element | null) => {
+      const row = target?.closest('[data-task-id]')
+      const id = row?.getAttribute('data-task-id')
+      onSelect(id && id !== selectedId ? id : null)
+    },
+    [onSelect, selectedId],
+  )
+  const ownsSelection = rows.some((row) => row.raw.id === selectedId)
+  useClickOutside(editorRef, closeEditor, ownsSelection)
+
+
   // Subtasks inherit their parent's class unless they carry their own.
-  const resolved = resolveCategories(nodes, listTitles)
+  const resolved = resolveCategories(nodes, listTitles, lists[0]?.id)
   const categoryFor = (node: TaskNode): string =>
-    resolved.get(node.raw.id) ?? categoryOf(node, listTitles)
+    resolved.get(node.raw.id)?.category ?? categoryOf(node, listTitles)
 
   /**
    * The row after which the composer belongs: the parent's last descendant, or
@@ -106,6 +139,10 @@ export function TaskTree({
    */
   const showPillFor = (node: TaskNode): boolean => {
     if (!showCategory) return false
+    // An untagged task in the default list gets no pill: "My Tasks" on every
+    // row is noise, not information.
+    if (!resolved.get(node.raw.id)?.tagged) return false
+
     if (!node.parent) return true
     const parent = rows.find((r) => r.raw.id === node.parent)
     return !parent || categoryFor(parent) !== categoryFor(node)
@@ -167,14 +204,18 @@ export function TaskTree({
         dragging={draggingId === node.raw.id}
         onToggleCollapse={onToggleCollapse}
         onToggleComplete={(id, completed) => onComplete(id, completed)}
+        flash={flashId === node.raw.id}
+        onRename={(id, next) => void api.editTask(id, { title: next })}
+        onDone={() => onSelect(null)}
         onSelect={(id, range) => onSelect(range ? id : selected ? null : id, range)}
       />
     )
 
     return (
       <Fragment key={node.raw.id}>
+        <div ref={selected ? editorRef : undefined} data-task-id={node.raw.id}>
         {sortable ? (
-          <SortableRow id={node.raw.id} theme={theme}>
+          <SortableRow id={node.raw.id} theme={theme} disabled={selected}>
             {row}
           </SortableRow>
         ) : (
@@ -189,6 +230,8 @@ export function TaskTree({
             theme={theme}
             api={api}
             scheduled={blocks.has(node.raw.id)}
+            showMore={showMore}
+            onToggleMore={onToggleMore}
             onAddSubtask={() => setComposingUnder(node.raw.id)}
             onSchedule={() => onStartScheduling(node.raw.id)}
             onClose={() => onSelect(null)}
@@ -214,6 +257,7 @@ export function TaskTree({
             onCancel={() => onStartScheduling(null)}
           />
         )}
+        </div>
       </Fragment>
     )
   })

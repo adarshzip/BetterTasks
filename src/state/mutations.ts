@@ -26,6 +26,15 @@ export function positionAt(index: number): string {
   return String(index).padStart(POSITION_WIDTH, '0')
 }
 
+/**
+ * Sorts after any real position.
+ *
+ * Google's positions are zero-padded digit strings, so any non-digit above '9'
+ * sorts last. Used for an optimistic insert that should land at the end of its
+ * sibling group; `resequence` renumbers it properly straight afterwards.
+ */
+export const LAST_POSITION = '~'.repeat(POSITION_WIDTH)
+
 /** Applies a mutation to the task array, returning a new array. */
 export function applyMutation(tasks: WireTask[], mutation: Mutation): WireTask[] {
   switch (mutation.type) {

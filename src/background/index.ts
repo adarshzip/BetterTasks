@@ -81,7 +81,7 @@ async function handle(message: Request): Promise<unknown> {
       return loadBlocks()
 
     case 'createTask':
-      return createTask(message.listId, message.task, message.parent)
+      return createTask(message.listId, message.task, message.parent, message.previous)
 
     case 'patchTask':
       return patchTask(message.listId, message.taskId, message.patch)

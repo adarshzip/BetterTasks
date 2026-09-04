@@ -96,14 +96,25 @@ export function freeMinutesBefore(
   )
 }
 
-/** True when a task cannot fit in the time left before its deadline. */
+/**
+ * True when a task cannot fit in the time left before its deadline.
+ *
+ * Requires a real effort estimate: applying the one-hour default here would
+ * flag ordinary tasks as at risk purely because the day is busy, which is
+ * noise rather than a warning. Only a number the user actually entered says
+ * anything about whether the work fits.
+ *
+ * A due time makes the deadline exact. Something needing two hours at 3pm,
+ * due at 4pm, is at risk; the same task due "today" is not.
+ */
 export function isAtRisk(
-  task: { due: Date | null; minutes?: number },
+  task: { due: Date | null; minutes?: number; hasTime?: boolean },
   options: { now: Date; busy: Interval[]; hours?: WorkingHours },
 ): boolean {
-  if (!task.due) return false
-  const needed = task.minutes ?? DEFAULT_MINUTES
-  return freeMinutesBefore(endOfDay(task.due), options) < needed
+  if (!task.due || !task.minutes) return false
+
+  const deadline = task.hasTime ? task.due : endOfDay(task.due)
+  return freeMinutesBefore(deadline, options) < task.minutes
 }
 
 /**

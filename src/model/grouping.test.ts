@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { groupTasks, matchesQuery } from './grouping'
+import { groupTasks, matchesQuery, type ViewMode } from './grouping'
 import { toTask } from './tree'
 import { positionAt } from '@/state/mutations'
 import type { GTask, GTaskList } from './types'
@@ -21,7 +21,7 @@ const task = (id: string, extra: Partial<GTask> = {}): GTask => ({
   ...extra,
 })
 
-const group = (raws: GTask[], mode: 'due' | 'category' = 'due') =>
+const group = (raws: GTask[], mode: ViewMode = 'due') =>
   groupTasks(raws.map((r) => toTask(r, 'l1')), LISTS, mode, NOW)
 
 describe('groupTasks keeps trees intact', () => {
@@ -132,6 +132,62 @@ describe('ordering within a bucket', () => {
       task('step', { parent: 'project', due: at(2) }),
     ])
     expect(groups[0]!.nodes.map((n) => n.raw.id)).toEqual(['project', 'soon'])
+  })
+})
+
+describe('the today view', () => {
+  it('shows only what is already due', () => {
+    const { urgent, groups } = group(
+      [task('now', { due: at(0) }), task('later', { due: at(5) })],
+      'today',
+    )
+    expect(urgent.map((n) => n.raw.id)).toEqual(['now'])
+    // Nothing is bucketed: today is a single answer, not an organisation.
+    expect(groups).toHaveLength(0)
+  })
+
+  it('includes overdue work', () => {
+    const { urgent } = group([task('late', { due: at(-3) })], 'today')
+    expect(urgent.map((n) => n.raw.id)).toEqual(['late'])
+  })
+})
+
+describe('remainingEffort', () => {
+  it('sums estimates across a group', () => {
+    const { groups } = group([
+      task('a', { due: at(3), notes: '⟦bt⟧{"eff":30}' }),
+      task('b', { due: at(3), notes: '⟦bt⟧{"eff":90}' }),
+    ])
+    expect(groups[0]!.effort).toBe(120)
+  })
+
+  it('counts subtasks', () => {
+    const { groups } = group([
+      task('parent', { due: at(3), notes: '⟦bt⟧{"eff":30}' }),
+      task('child', { parent: 'parent', due: at(3), notes: '⟦bt⟧{"eff":15}' }),
+    ])
+    expect(groups[0]!.effort).toBe(45)
+  })
+
+  // The number answers "how much is left", so finished work must not inflate it.
+  it('ignores completed tasks', () => {
+    const { groups } = group(
+      [
+        task('done', {
+          status: 'completed',
+          due: at(3),
+          notes: '⟦bt⟧{"cat":"MATH 458","eff":60}',
+        }),
+        task('todo', { due: at(3), notes: '⟦bt⟧{"cat":"MATH 458","eff":30}' }),
+      ],
+      'category',
+    )
+    expect(groups[0]!.effort).toBe(30)
+  })
+
+  it('is zero when nothing is estimated', () => {
+    const { groups } = group([task('a', { due: at(3) })])
+    expect(groups[0]!.effort).toBe(0)
   })
 })
 

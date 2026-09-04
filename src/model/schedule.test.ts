@@ -169,4 +169,25 @@ describe('freeMinutesBefore and isAtRisk', () => {
   it('never flags a task with no due date', () => {
     expect(isAtRisk({ due: null, minutes: 6000 }, { now: NOW, busy: [] })).toBe(false)
   })
+
+  // Without an estimate there is nothing to compare against, and assuming an
+  // hour would flag ordinary tasks just because the day is busy.
+  it('never flags a task with no effort estimate', () => {
+    const options = { now: NOW, busy: [busy(2, 9, 22)] }
+    expect(isAtRisk({ due: at(2, 0) }, options)).toBe(false)
+  })
+
+  it('uses the due time as the deadline when there is one', () => {
+    const options = { now: NOW, busy: [] }
+    // 09:00 now, due 16:00, needs two hours: five hours free, so it fits.
+    expect(isAtRisk({ due: at(2, 16), minutes: 120, hasTime: true }, options)).toBe(false)
+    // Needing eight hours before 16:00 does not.
+    expect(isAtRisk({ due: at(2, 16), minutes: 480, hasTime: true }, options)).toBe(true)
+  })
+
+  it('falls back to end of day when no time was set', () => {
+    const options = { now: NOW, busy: [] }
+    // The same eight hours fit if the deadline is the whole day.
+    expect(isAtRisk({ due: at(2, 16), minutes: 480 }, options)).toBe(false)
+  })
 })

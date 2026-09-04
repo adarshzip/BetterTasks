@@ -18,7 +18,13 @@ export type Request =
     }
   | { type: 'unscheduleTask'; eventId: string }
   | { type: 'loadBlocks' }
-  | { type: 'createTask'; listId: string; task: Partial<GTask>; parent?: string }
+  | {
+      type: 'createTask'
+      listId: string
+      task: Partial<GTask>
+      parent?: string
+      previous?: string
+    }
   | { type: 'patchTask'; listId: string; taskId: string; patch: Partial<GTask> }
   | { type: 'deleteTask'; listId: string; taskId: string }
   | { type: 'moveTask'; listId: string; taskId: string; parent?: string; previous?: string }

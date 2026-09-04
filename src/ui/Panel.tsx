@@ -1,10 +1,19 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import type { Theme } from './theme'
-import { groupTasks, knownCategories, lingers, matchesQuery, type ViewMode } from '@/model/grouping'
+import {
+  groupTasks,
+  knownCategories,
+  lingers,
+  matchesQuery,
+  remainingEffort,
+  type ViewMode,
+} from '@/model/grouping'
 import { buildTree, toTask } from '@/model/tree'
 import { useTasks } from '@/state/useTasks'
 import { useCalendar } from '@/state/useCalendar'
 import { isAtRisk } from '@/model/schedule'
+import type { ParsedEntry } from '@/model/quickadd'
+import { formatEffort } from './TaskRow'
 import { loadViewState, saveViewState } from '@/state/store'
 import { TaskTree } from './TaskTree'
 import { QuickAdd } from './QuickAdd'
@@ -28,7 +37,13 @@ export function Panel({ theme }: { theme: Theme }) {
   const [showCompleted, setShowCompleted] = useState(false)
   const [showDeferred, setShowDeferred] = useState(false)
   const [schedulingId, setSchedulingId] = useState<string | null>(null)
+  const [flashId, setFlashId] = useState<string | null>(null)
+  // Sticky for the session: someone who wants the full field set should not
+  // re-open it on every task.
+  const [showMore, setShowMore] = useState(false)
   const [query, setQuery] = useState('')
+  // Search does not earn a permanent row; it opens from the header or `/`.
+  const [searchOpen, setSearchOpen] = useState(false)
   const [selection, setSelection] = useState<ReadonlySet<string>>(new Set())
 
   useEffect(() => {
@@ -134,7 +149,11 @@ export function Panel({ theme }: { theme: Theme }) {
         nudge: (direction: 'up' | 'down') => cursor && void api.nudge(cursor, direction),
         remove: () => cursor && void api.removeTask(cursor),
         focusQuickAdd: () => document.getElementById('bt-quickadd')?.focus(),
-        focusSearch: () => document.getElementById('bt-search')?.focus(),
+        focusSearch: () => {
+          setSearchOpen(true)
+          // Opening renders the field, so focus has to wait a frame for it.
+          requestAnimationFrame(() => document.getElementById('bt-search')?.focus())
+        },
         snooze: (days: number) => cursor && void api.snooze(cursor, days),
         dismiss: () => setSelectedId(null),
         undo: () => void api.runUndo(),
@@ -204,8 +223,11 @@ export function Panel({ theme }: { theme: Theme }) {
   const atRisk = useCallback(
     (node: (typeof urgent)[number]): boolean => {
       if (node.completed || !calendar.busy.length) return false
+      // No estimate, no warning: see isAtRisk.
+      if (!node.meta.eff) return false
+
       return isAtRisk(
-        { due: node.due, ...(node.meta.eff ? { minutes: node.meta.eff } : {}) },
+        { due: node.due, minutes: node.meta.eff, hasTime: !!node.meta.time },
         { now: new Date(), busy: calendar.busy },
       )
     },
@@ -254,6 +276,50 @@ export function Panel({ theme }: { theme: Theme }) {
     return parent ? { id: parent.raw.id, title: parent.title } : null
   }, [cursor, urgent, groups])
 
+  /**
+   * Adds a task and shows where it landed.
+   *
+   * A new task sorts straight into a due bucket that may be far down the list
+   * or inside a collapsed section, so without this, typing a task and pressing
+   * Enter looks like nothing happened. Moving the cursor reuses the row's
+   * existing scroll-into-view, and the flash says which row is new.
+   */
+  const addTask = useCallback(
+    async (listId: string, parsed: ParsedEntry, parent?: string) => {
+      const id = await api.createTask(listId, parsed.title, parent, {
+        ...(parsed.due ? { due: parsed.due } : {}),
+        ...(parsed.time ? { time: parsed.time } : {}),
+        ...(parsed.category ? { category: parsed.category } : {}),
+        ...(parsed.eff ? { eff: parsed.eff } : {}),
+        ...(parsed.pri ? { pri: parsed.pri } : {}),
+      })
+      if (!id) return
+
+      // The server's id, not the optimistic `pending-` one: that row has
+      // already been replaced by the reload.
+      setCursorId(id)
+      setFlashId(id)
+      setTimeout(() => setFlashId((current) => (current === id ? null : current)), 1200)
+    },
+    [api],
+  )
+
+  /** Incomplete tasks whose due date has already passed. */
+  const overdueIds = useMemo(() => {
+    const startOfToday = new Date()
+    startOfToday.setHours(0, 0, 0, 0)
+
+    const out: string[] = []
+    const visit = (nodes: typeof urgent): void => {
+      for (const node of nodes) {
+        if (!node.completed && node.due && node.due < startOfToday) out.push(node.raw.id)
+        visit(node.children)
+      }
+    }
+    visit(urgent)
+    return out
+  }, [urgent])
+
   const tree = (nodes: typeof urgent, showCategory: boolean) => (
     <TaskTree
       nodes={nodes}
@@ -267,6 +333,9 @@ export function Panel({ theme }: { theme: Theme }) {
       busy={calendar.busy}
       blocks={calendar.blocks}
       atRisk={atRisk}
+      flashId={flashId}
+      showMore={showMore}
+      onToggleMore={setShowMore}
       schedulingId={schedulingId}
       onStartScheduling={setSchedulingId}
       onSchedule={scheduleTask}
@@ -308,6 +377,18 @@ export function Panel({ theme }: { theme: Theme }) {
         onRefresh={() => void api.load()}
         busy={api.status === 'loading'}
       >
+        <button
+          aria-label={searchOpen ? 'Close search' : 'Search'}
+          title="Search"
+          onClick={() => {
+            if (searchOpen) setQuery('')
+            setSearchOpen(!searchOpen)
+          }}
+          style={{ ...buttonStyle(theme), border: 'none', padding: '3px 6px', color: theme.muted }}
+        >
+          ⌕
+        </button>
+
         <button
           aria-label="Keyboard shortcuts"
           title="Keyboard shortcuts"
@@ -363,7 +444,17 @@ export function Panel({ theme }: { theme: Theme }) {
               />
             )}
 
-            <SearchBox theme={theme} value={query} onChange={setQuery} />
+            {searchOpen && (
+              <SearchBox
+                theme={theme}
+                value={query}
+                onChange={setQuery}
+                onClose={() => {
+                  setQuery('')
+                  setSearchOpen(false)
+                }}
+              />
+            )}
 
             <QuickAdd
               theme={theme}
@@ -373,25 +464,30 @@ export function Panel({ theme }: { theme: Theme }) {
               colourOf={calendar.colourOf}
               nestTarget={nestTarget}
               onListChange={setActiveListId}
-              onAdd={(listId, parsed, parent) =>
-                void api.createTask(listId, parsed.title, parent, {
-                  ...(parsed.due ? { due: parsed.due } : {}),
-                  ...(parsed.time ? { time: parsed.time } : {}),
-                  ...(parsed.category ? { category: parsed.category } : {}),
-                  ...(parsed.eff ? { eff: parsed.eff } : {}),
-                  ...(parsed.pri ? { pri: parsed.pri } : {}),
-                })
-              }
+              onAdd={(listId, parsed, parent) => void addTask(listId, parsed, parent)}
             />
 
             {urgent.length > 0 && (
-              <Section title="Overdue and today" theme={theme} accent>
+              <Section
+                title="Overdue and today"
+                theme={theme}
+                accent
+                effort={remainingEffort(urgent)}
+                action={
+                  overdueIds.length > 0
+                    ? {
+                        label: `Move ${overdueIds.length} overdue to today`,
+                        onClick: () => void api.carryOverdueForward(overdueIds),
+                      }
+                    : undefined
+                }
+              >
                 {tree(urgent, true)}
               </Section>
             )}
 
             {groups.map((group) => (
-              <Section key={group.key} title={group.label} theme={theme}>
+              <Section key={group.key} title={group.label} theme={theme} effort={group.effort}>
                 {tree(group.nodes, mode === 'due')}
               </Section>
             ))}
@@ -472,11 +568,17 @@ function Header({
       <strong style={{ fontSize: 13, flex: 1 }}>BetterTasks</strong>
 
       <div style={{ display: 'flex', border: `1px solid ${theme.border}`, borderRadius: 999 }}>
-        {(['due', 'category'] as const).map((value) => (
+        {(['today', 'due', 'category'] as const).map((value) => (
           <button
             key={value}
             onClick={() => onMode(value)}
-            aria-label={value === 'due' ? 'Group by due date' : 'Group by class'}
+            aria-label={
+              value === 'today'
+                ? 'Today'
+                : value === 'due'
+                  ? 'Group by due date'
+                  : 'Group by class'
+            }
             aria-pressed={mode === value}
             style={{
               ...buttonStyle(theme),
@@ -488,7 +590,7 @@ function Header({
               color: mode === value ? theme.bg : theme.muted,
             }}
           >
-            {value === 'due' ? 'Due' : 'Class'}
+            {value === 'today' ? 'Today' : value === 'due' ? 'Due' : 'Class'}
           </button>
         ))}
       </div>
@@ -513,6 +615,8 @@ function Section({
   accent,
   collapsible,
   open,
+  effort,
+  action,
   onToggle,
   children,
 }: {
@@ -521,6 +625,8 @@ function Section({
   accent?: boolean
   collapsible?: boolean
   open?: boolean
+  effort?: number | undefined
+  action?: { label: string; onClick: () => void } | undefined
   onToggle?: () => void
   children: React.ReactNode
 }) {
@@ -543,7 +649,25 @@ function Section({
       >
         {collapsible && <span style={{ marginRight: 4 }}>{open ? '▾' : '▸'}</span>}
         {title}
+        {/* Remaining effort, so a heavy week is visible before you open it. */}
+        {!!effort && <span style={{ color: theme.muted }}> · {formatEffort(effort)}</span>}
       </div>
+
+      {action && (
+        <button
+          aria-label={action.label}
+          onClick={action.onClick}
+          style={{
+            all: 'unset',
+            cursor: 'pointer',
+            fontSize: 11,
+            color: theme.accent,
+            marginBottom: 4,
+          }}
+        >
+          {action.label}
+        </button>
+      )}
       {children}
     </section>
   )
@@ -589,23 +713,26 @@ function SearchBox({
   theme,
   value,
   onChange,
+  onClose,
 }: {
   theme: Theme
   value: string
   onChange: (value: string) => void
+  onClose: () => void
 }) {
   return (
     <div style={{ position: 'relative', marginBottom: 8 }}>
       <input
         id="bt-search"
+        autoFocus
         value={value}
         aria-label="Search tasks"
         placeholder="Search"
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Escape') {
-            onChange('')
             e.currentTarget.blur()
+            onClose()
           }
         }}
         style={{
@@ -622,7 +749,7 @@ function SearchBox({
       {value && (
         <button
           aria-label="Clear search"
-          onClick={() => onChange('')}
+          onClick={onClose}
           style={{
             all: 'unset',
             cursor: 'pointer',

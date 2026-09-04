@@ -30,4 +30,4 @@ made due tomorrow at 9pm, and the app suggests 30 minute blocks for you to work
 on it.  
 
 Nothing ever leaves your account: all of this is done by storing information
-within your Google Tasks and Calendar. The app just makes those two apps better. 
+within your Google Tasks and Calendar. This just makes those two apps better. 

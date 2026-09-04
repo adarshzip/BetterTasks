@@ -1,4 +1,4 @@
-# Documentation is kept local rather than tracked.
+# Documentation is kept local rather than tracked. Excludes the readme. 
 docs/
 
 node_modules/

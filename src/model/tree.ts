@@ -1,5 +1,6 @@
 import type { GTask, Task, TaskNode } from './types'
 import { decodeNotes } from './metadata'
+import { stripClassPrefix } from './title'
 
 /**
  * Tree builder.
@@ -19,7 +20,9 @@ export function toTask(raw: GTask, listId: string): Task {
   return {
     raw,
     listId,
-    title: raw.title?.trim() ?? '',
+    // The class is mirrored into the stored title so Google's own clients show
+    // it; here it is rendered as a pill instead, so strip it back off.
+    title: stripClassPrefix(raw.title ?? '', meta.cat),
     notes: body,
     meta,
     due: parseDue(raw.due, meta.time),
@@ -134,17 +137,56 @@ export function flattenTree(roots: TaskNode[], collapsed: ReadonlySet<string> = 
   return out
 }
 
-/** Completed-versus-total across a node's descendants, for the progress rollup. */
-export function progressOf(node: TaskNode): { done: number; total: number } {
-  let done = 0
-  let total = 0
-  const visit = (nodes: TaskNode[]): void => {
-    for (const child of nodes) {
+export interface Progress {
+  done: number
+  total: number
+}
+
+/**
+ * Completed-versus-total for every task with children, computed from the flat
+ * list rather than the rendered tree.
+ *
+ * This has to come from the flat list because completed tasks are pruned
+ * before the tree is built. Counting the tree's children made the rollup
+ * useless: finishing a subtask removed it, so the denominator shrank with the
+ * numerator and a three-part project went 0/3, 0/2, 0/1, gone.
+ *
+ * Only counts what has been loaded. Completed tasks are fetched lazily, so a
+ * subtask finished months ago is missing until the Completed section is
+ * opened. Recent completions are always present, which covers work in flight.
+ */
+export function progressByParent(tasks: Task[]): Map<string, Progress> {
+  const children = new Map<string, Task[]>()
+  for (const task of tasks) {
+    if (!task.parent) continue
+    children.set(task.parent, [...(children.get(task.parent) ?? []), task])
+  }
+
+  const progress = new Map<string, Progress>()
+
+  const measure = (id: string, seen: Set<string>): Progress => {
+    const cached = progress.get(id)
+    if (cached) return cached
+    // Guards against a parent cycle, which buildTree also defends against.
+    if (seen.has(id)) return { done: 0, total: 0 }
+    seen.add(id)
+
+    let done = 0
+    let total = 0
+    for (const child of children.get(id) ?? []) {
       total += 1
       if (child.completed) done += 1
-      visit(child.children)
+
+      const nested = measure(child.raw.id, seen)
+      done += nested.done
+      total += nested.total
     }
+
+    const result = { done, total }
+    progress.set(id, result)
+    return result
   }
-  visit(node.children)
-  return { done, total }
+
+  for (const id of children.keys()) measure(id, new Set())
+  return progress
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { decodeNotes, encodeNotes, withMeta } from './metadata'
+import { decodeNotes, encodeNotes, notePreview, withMeta } from './metadata'
 
 describe('decodeNotes', () => {
   it('handles empty input', () => {
@@ -97,5 +97,37 @@ describe('round trip', () => {
     notes = withMeta(notes, { pri: 1 })
     expect(notes).toBe('note\n\n⟦bt⟧{"eff":60,"pri":1}')
     expect(notes.match(/⟦bt⟧/g)).toHaveLength(1)
+  })
+})
+
+describe('notePreview', () => {
+  it('returns nothing for an empty note', () => {
+    expect(notePreview(undefined)).toBe('')
+    expect(notePreview('   \n  ')).toBe('')
+  })
+
+  it('takes the first line', () => {
+    expect(notePreview('read chapters 4-5\nthen the problems')).toBe('read chapters 4-5')
+  })
+
+  it('skips leading blank lines', () => {
+    expect(notePreview('\n\n  actual content')).toBe('actual content')
+  })
+
+  it('collapses runs of whitespace', () => {
+    expect(notePreview('read    chapters\t4-5')).toBe('read chapters 4-5')
+  })
+
+  it('truncates a long line with an ellipsis', () => {
+    const preview = notePreview('x'.repeat(200))
+    expect(preview).toHaveLength(120)
+    expect(preview.endsWith('…')).toBe(true)
+  })
+
+  // The metadata block is stripped before this sees the note, so it can never
+  // leak into a preview.
+  it('never shows the metadata block', () => {
+    const { body } = decodeNotes('office hours Thursday\n\n⟦bt⟧{"eff":90}')
+    expect(notePreview(body)).toBe('office hours Thursday')
   })
 })

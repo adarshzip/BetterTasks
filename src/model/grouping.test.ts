@@ -191,6 +191,92 @@ describe('remainingEffort', () => {
   })
 })
 
+describe('revealing completed subtasks', () => {
+  const project = () => [
+    task('project', { due: at(3) }),
+    task('done', { parent: 'project', status: 'completed', due: at(3) }),
+    task('todo', { parent: 'project', due: at(3) }),
+  ]
+
+  it('hides completed subtasks by default', () => {
+    const { groups } = group(project())
+    expect(groups[0]!.nodes[0]!.children.map((n) => n.raw.id)).toEqual(['todo'])
+  })
+
+  it('shows them for a revealed parent', () => {
+    const { groups } = groupTasks(
+      project().map((r) => toTask(r, 'l1')),
+      LISTS,
+      'due',
+      NOW,
+      [],
+      new Set(['project']),
+    )
+    expect(groups[0]!.nodes[0]!.children.map((n) => n.raw.id).sort()).toEqual(['done', 'todo'])
+  })
+
+  it('does not reveal completed subtasks of other parents', () => {
+    const tasks = [
+      ...project(),
+      task('other', { due: at(3) }),
+      task('otherDone', { parent: 'other', status: 'completed', due: at(3) }),
+    ]
+    const { groups } = groupTasks(
+      tasks.map((r) => toTask(r, 'l1')),
+      LISTS,
+      'due',
+      NOW,
+      [],
+      new Set(['project']),
+    )
+    const other = groups[0]!.nodes.find((n) => n.raw.id === 'other')
+    expect(other?.children).toHaveLength(0)
+  })
+})
+
+describe('class ordering', () => {
+  const LISTS2: GTaskList[] = [{ id: 'l1', title: 'My Tasks' }]
+  const withClass = (id: string, cat: string) =>
+    task(id, { due: at(3), notes: `⟦bt⟧{"cat":"${cat}"}` })
+
+  const ordered = (raws: GTask[], order: string[]) =>
+    groupTasks(raws.map((r) => toTask(r, 'l1')), LISTS2, 'category', NOW, order).groups.map(
+      (g) => g.label,
+    )
+
+  it('falls back to alphabetical with no stored order', () => {
+    expect(ordered([withClass('a', 'QBIO 401'), withClass('b', 'MATH 458')], [])).toEqual([
+      'MATH 458',
+      'QBIO 401',
+    ])
+  })
+
+  it('follows the stored order', () => {
+    expect(
+      ordered([withClass('a', 'QBIO 401'), withClass('b', 'MATH 458')], ['QBIO 401', 'MATH 458']),
+    ).toEqual(['QBIO 401', 'MATH 458'])
+  })
+
+  // A class the user has never moved should not jump to the front.
+  it('places unordered classes after ordered ones, alphabetically', () => {
+    const labels = ordered(
+      [withClass('a', 'QBIO 401'), withClass('b', 'MATH 458'), withClass('c', 'TAC 458')],
+      ['TAC 458'],
+    )
+    expect(labels).toEqual(['TAC 458', 'MATH 458', 'QBIO 401'])
+  })
+
+  it('ignores a stored order for classes that no longer exist', () => {
+    expect(ordered([withClass('a', 'MATH 458')], ['GONE 101', 'MATH 458'])).toEqual(['MATH 458'])
+  })
+
+  // Ordering is a class-view concept; due buckets have their own sequence.
+  it('does not disturb due buckets', () => {
+    const { groups } = group([task('a', { due: at(3) }), task('b', { due: at(20) })])
+    expect(groups.map((g) => g.label)).toEqual(['This week', 'Later'])
+  })
+})
+
 describe('matchesQuery', () => {
   const titles = new Map([['l1', 'MATH 458']])
   const of = (raw: GTask) => toTask(raw, 'l1')

@@ -5,6 +5,8 @@ import { send, PanelError } from '@/lib/messaging'
 import { decodeNotes, encodeNotes, withMeta, type MetaPatch } from '@/model/metadata'
 import { encodeDue } from '@/model/dates'
 import { nextOccurrence } from '@/model/recurrence'
+import type { Suggestion } from '@/model/triage'
+import { applyClassPrefix, stripClassPrefix } from '@/model/title'
 import {
   applyMutation,
   indentTarget,
@@ -65,6 +67,7 @@ export interface TasksApi {
   setDue: (id: string, date: Date | null, time?: string | null) => Promise<void>
   snooze: (id: string, days: number) => Promise<void>
   carryOverdueForward: (ids: string[]) => Promise<void>
+  applySuggestion: (suggestion: Suggestion) => Promise<void>
   setMeta: (id: string, patch: MetaPatch) => Promise<void>
   removeTask: (id: string) => Promise<void>
   indent: (id: string) => Promise<void>
@@ -206,6 +209,7 @@ export function useTasks(): TasksApi {
       // Quick-add extras become a metadata block and a due date on creation,
       // so the task is complete on its first write rather than patched after.
       const { due } = encodeDue(extras?.due ?? null, extras?.time ?? null)
+      const stored = applyClassPrefix(trimmed, extras?.category)
       const notes = encodeNotes('', {
         ...(extras?.category ? { cat: extras.category } : {}),
         ...(extras?.time ? { time: extras.time } : {}),
@@ -223,7 +227,7 @@ export function useTasks(): TasksApi {
 
       const task: WireTask = {
         id: `pending-${crypto.randomUUID()}`,
-        title: trimmed,
+        title: stored,
         listId,
         status: 'needsAction',
         position: LAST_POSITION,
@@ -241,7 +245,7 @@ export function useTasks(): TasksApi {
         const response = await send<{ id?: string }>({
           type: 'createTask',
           listId,
-          task: { title: trimmed, ...(due ? { due } : {}), ...(notes ? { notes } : {}) },
+          task: { title: stored, ...(due ? { due } : {}), ...(notes ? { notes } : {}) },
           ...(parent ? { parent } : {}),
           ...(previous ? { previous } : {}),
         })
@@ -366,14 +370,17 @@ export function useTasks(): TasksApi {
       const task = find(id)
       if (!task) return
 
+      const { meta } = decodeNotes(task.notes)
+
       const apiPatch: Partial<GTask> = {}
-      if (fields.title !== undefined) apiPatch.title = fields.title
+      // The edited title is the display one, so re-apply the class prefix.
+      if (fields.title !== undefined) {
+        apiPatch.title = applyClassPrefix(fields.title, meta.cat)
+      }
 
       // `fields.notes` is the human-readable body only. Re-attach the existing
       // metadata block so editing a note never drops the task's metadata.
-      if (fields.notes !== undefined) {
-        apiPatch.notes = encodeNotes(fields.notes, decodeNotes(task.notes).meta)
-      }
+      if (fields.notes !== undefined) apiPatch.notes = encodeNotes(fields.notes, meta)
 
       await patch(id, apiPatch, 'Task edited')
     },
@@ -432,11 +439,60 @@ export function useTasks(): TasksApi {
     [snooze],
   )
 
+  /**
+   * Applies a triage suggestion as a single write.
+   *
+   * Title, metadata, and due date all land in one patch rather than three: the
+   * Tasks API is slow enough that accepting a queue of ten suggestions would
+   * otherwise be thirty sequential requests.
+   */
+  const applySuggestion = useCallback(
+    async (suggestion: Suggestion) => {
+      const task = find(suggestion.taskId)
+      if (!task) return
+
+      const { body } = decodeNotes(task.notes)
+      const { due } = encodeDue(suggestion.due ?? null, suggestion.time ?? null)
+
+      const notes = encodeNotes(body, {
+        ...(suggestion.category ? { cat: suggestion.category } : {}),
+        ...(suggestion.time ? { time: suggestion.time } : {}),
+        ...(suggestion.eff ? { eff: suggestion.eff } : {}),
+        ...(suggestion.pri ? { pri: suggestion.pri } : {}),
+      })
+
+      await patch(
+        suggestion.taskId,
+        {
+          title: applyClassPrefix(suggestion.title, suggestion.category),
+          notes,
+          // Only touch the due date when the title actually carried one.
+          ...(suggestion.due ? { due: due as string } : {}),
+        },
+        'Task tagged',
+      )
+    },
+    [find, patch],
+  )
+
   const setMeta = useCallback(
     async (id: string, metaPatch: MetaPatch) => {
       const task = find(id)
       if (!task) return
-      await patch(id, { notes: withMeta(task.notes, metaPatch) })
+
+      const notes = withMeta(task.notes, metaPatch)
+
+      // A changed class changes the stored title too, so the prefix Google's
+      // clients display stays in step with the metadata that owns it.
+      const changesClass = 'cat' in metaPatch
+      if (!changesClass) {
+        await patch(id, { notes })
+        return
+      }
+
+      const { meta } = decodeNotes(task.notes)
+      const display = stripClassPrefix(task.title ?? '', meta.cat)
+      await patch(id, { notes, title: applyClassPrefix(display, metaPatch.cat) })
     },
     [patch, find],
   )
@@ -636,6 +692,7 @@ export function useTasks(): TasksApi {
     setDue,
     snooze,
     carryOverdueForward,
+    applySuggestion,
     setMeta,
     removeTask,
     indent,

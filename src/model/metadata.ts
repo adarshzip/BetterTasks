@@ -121,6 +121,28 @@ function compactMeta(meta: MetaPatch): TaskMeta {
   return out
 }
 
+/**
+ * The first meaningful line of a note, for showing on a row.
+ *
+ * Notes reaching here have already had the metadata block stripped by
+ * `decodeNotes`, so this only ever sees what the user wrote. Whitespace is
+ * collapsed because a note pasted from a document often begins with indented
+ * or wrapped text that would otherwise render as a ragged fragment.
+ */
+export function notePreview(notes: string | undefined, max = 120): string {
+  if (!notes) return ''
+
+  const line = notes
+    .split(/\r?\n/)
+    .map((part) => part.trim())
+    .find(Boolean)
+
+  if (!line) return ''
+
+  const collapsed = line.replace(/\s+/g, ' ')
+  return collapsed.length > max ? `${collapsed.slice(0, max - 1).trimEnd()}…` : collapsed
+}
+
 export function withMeta(notes: string | undefined, patch: MetaPatch): string {
   const { body, meta } = decodeNotes(notes)
   return encodeNotes(body, { ...meta, ...patch })

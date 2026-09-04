@@ -20,31 +20,7 @@
       <!-- Replaced by React. If this text survives, the module never ran. -->
       <div id="boot">Starting…</div>
     </div>
-    <script>
-      // A module that fails to parse or load leaves a blank white page with
-      // nothing in the console the user is likely to find. Surface it in the
-      // page instead. Cleared by main.tsx on a successful render.
-      (function () {
-        function show(what, detail) {
-          var boot = document.getElementById('boot')
-          if (!boot) return
-          boot.innerHTML = '<strong>' + what + '</strong><pre></pre>'
-          boot.querySelector('pre').textContent = String(detail)
-        }
-        window.addEventListener('error', function (e) {
-          show('Script error', (e.error && e.error.stack) || e.message)
-        })
-        window.addEventListener('unhandledrejection', function (e) {
-          show('Unhandled rejection', (e.reason && e.reason.stack) || e.reason)
-        })
-        setTimeout(function () {
-          var boot = document.getElementById('boot')
-          if (boot && boot.textContent === 'Starting…') {
-            show('Module never executed', 'The bundle did not load. Check the console for a CSP or 404 error.')
-          }
-        }, 3000)
-      })()
-    </script>
+    <script type="module" src="./boot.ts"></script>
     <script type="module" src="./main.tsx"></script>
   </body>
 </html>

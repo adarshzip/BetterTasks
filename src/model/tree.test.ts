@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildTree, flattenTree, progressOf, toTask } from './tree'
+import { buildTree, flattenTree, progressByParent, toTask } from './tree'
 import type { GTask } from './types'
 
 const task = (id: string, extra: Partial<GTask> = {}): GTask => ({
@@ -110,17 +110,58 @@ describe('flattenTree', () => {
   })
 })
 
-describe('progressOf', () => {
-  it('counts descendants, not the node itself', () => {
-    const roots = build([
+describe('progressByParent', () => {
+  const measure = (raws: GTask[]) => progressByParent(raws.map((r) => toTask(r, 'list1')))
+
+  it('counts children, not the parent itself', () => {
+    const progress = measure([
       task('p', { status: 'completed' }),
       task('c1', { parent: 'p', status: 'completed' }),
       task('c2', { parent: 'p' }),
     ])
-    expect(progressOf(roots[0]!)).toEqual({ done: 1, total: 2 })
+    expect(progress.get('p')).toEqual({ done: 1, total: 2 })
   })
 
-  it('reports zero for a leaf', () => {
-    expect(progressOf(build([task('solo')])[0]!)).toEqual({ done: 0, total: 0 })
+  // The bug this replaced: completed subtasks are pruned from the tree, so
+  // counting the tree's children shrank the denominator as work got done.
+  it('keeps counting a subtask after it is completed', () => {
+    const before = measure([task('p'), task('c1', { parent: 'p' }), task('c2', { parent: 'p' })])
+    expect(before.get('p')).toEqual({ done: 0, total: 2 })
+
+    const after = measure([
+      task('p'),
+      task('c1', { parent: 'p', status: 'completed' }),
+      task('c2', { parent: 'p' }),
+    ])
+    // Same denominator, higher numerator.
+    expect(after.get('p')).toEqual({ done: 1, total: 2 })
+  })
+
+  it('reports a fully finished project rather than nothing', () => {
+    const progress = measure([
+      task('p'),
+      task('c1', { parent: 'p', status: 'completed' }),
+      task('c2', { parent: 'p', status: 'completed' }),
+    ])
+    expect(progress.get('p')).toEqual({ done: 2, total: 2 })
+  })
+
+  it('has no entry for a leaf', () => {
+    expect(measure([task('solo')]).get('solo')).toBeUndefined()
+  })
+
+  it('counts deeper descendants too', () => {
+    const progress = measure([
+      task('p'),
+      task('c', { parent: 'p' }),
+      task('g', { parent: 'c', status: 'completed' }),
+    ])
+    expect(progress.get('p')).toEqual({ done: 1, total: 2 })
+    expect(progress.get('c')).toEqual({ done: 1, total: 1 })
+  })
+
+  it('terminates on a parent cycle', () => {
+    const progress = measure([task('a', { parent: 'b' }), task('b', { parent: 'a' })])
+    expect(progress.size).toBeGreaterThan(0)
   })
 })

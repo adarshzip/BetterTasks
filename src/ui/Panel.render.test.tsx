@@ -28,10 +28,17 @@ const SNAPSHOT = {
       due: '2026-09-30T00:00:00.000Z',
       position: '01',
       status: 'needsAction',
-      notes: '⟦bt⟧{"cat":"MATH 458"}',
+      notes: 'read chapters 4-5\nthen the problems\n\n⟦bt⟧{"cat":"MATH 458"}',
     },
     { id: 'c', title: 'Step one', listId: 'l1', parent: 'p', due: '2026-09-04T00:00:00.000Z', position: '01', status: 'needsAction' },
     { id: 'n', title: 'No date', listId: 'l1', position: '02', status: 'needsAction' },
+    {
+      id: 'captured',
+      title: 'qbio 401 HW1',
+      listId: 'l1',
+      position: '04',
+      status: 'needsAction',
+    },
     {
       id: 'r',
       title: 'Repeating',
@@ -105,7 +112,9 @@ describe('Panel', () => {
   it('renders without throwing', async () => {
     const container = await mount()
     expect(container.innerHTML).not.toBe('')
-    expect(container.textContent).toContain('BetterTasks')
+    // The browser's side panel header carries the name; the panel does not
+    // repeat it.
+    expect(container.textContent).toContain('Today')
   })
 
   it('renders tasks that arrived over the JSON message boundary', async () => {
@@ -690,6 +699,74 @@ describe('Panel interactions', () => {
     expect(time.tagName).toBe('SELECT')
     // Half-hourly choices plus "no time" and an explicit end-of-day option.
     expect(time.options.length).toBeGreaterThan(40)
+  })
+
+  // A task typed on a phone arrives as a plain title, because the mobile app
+  // cannot write class, effort, or priority.
+  it('offers to tag a task captured with syntax in its title', async () => {
+    const container = await mount()
+
+    const queue = byLabel(container, 'Show captured tasks')
+    expect(queue?.textContent).toContain('captured')
+
+    await click(byLabel(container, 'Tag all captured tasks'))
+
+    const patch = sent.filter((r) => r.type === 'patchTask').at(-1)
+    const body = JSON.stringify(patch).replace(/\\/g, '')
+    // Title cleaned, class recovered, and mirrored into the stored title so
+    // Google's own clients show it too.
+    expect(body).toContain('[QBIO 401] HW1')
+    expect(body).toContain('"cat":"QBIO 401"')
+  })
+
+  it('documents the capture syntax where it can be found', async () => {
+    const container = await mount()
+    await click(byLabel(container, 'Keyboard shortcuts'))
+    expect(container.textContent).toContain('Capture syntax')
+    expect(container.textContent).toContain('!1 !2 !3')
+  })
+
+  // The rollup says "1 of 3 done" but the finished one is pruned from the
+  // tree, so there was no way to see which.
+  it('reveals completed subtasks from the progress badge', async () => {
+    const container = await mount()
+    const badge = byLabel(container, 'Show completed subtasks')
+    expect(badge).toBeTruthy()
+
+    await click(badge)
+    // Revealing pulls the full history in, since completed tasks load lazily.
+    expect(sent.some((r) => r.type === 'loadCompleted')).toBe(true)
+    expect(byLabel(container, 'Hide completed subtasks')).toBeTruthy()
+  })
+
+  it('offers drag handles and arrows for reordering classes', async () => {
+    const container = await mount()
+    await click(byLabel(container, 'Group by class'))
+
+    expect(byLabel(container, 'Reorder MATH 458')).toBeTruthy()
+    expect(byLabel(container, 'Move MATH 458 down')).toBeTruthy()
+  })
+
+  it('previews the first line of the details on the row', async () => {
+    const container = await mount()
+    expect(container.textContent).toContain('read chapters 4-5')
+    // Only the first line, and never the metadata block.
+    expect(container.textContent).not.toContain('then the problems')
+    expect(container.textContent).not.toContain('⟦bt⟧')
+  })
+
+  it('hides the preview while the task is being edited', async () => {
+    const container = await mount()
+    const row = [...container.querySelectorAll('div[style*="cursor: pointer"]')].find((el) =>
+      el.textContent?.includes('Project'),
+    )
+    await click(row)
+
+    // The full note is in the editor, so the one-line preview would be noise.
+    const preview = [...container.querySelectorAll('div')].filter(
+      (el) => el.textContent === 'read chapters 4-5',
+    )
+    expect(preview).toHaveLength(0)
   })
 
   it('shows drag handles when a group holds one list', async () => {

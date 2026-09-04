@@ -163,6 +163,16 @@ export function groupTasks(
   lists: GTaskList[],
   mode: ViewMode,
   now = new Date(),
+  /** Preferred class order. Anything not listed falls in alphabetically after. */
+  categoryOrder: readonly string[] = [],
+  /**
+   * Parents whose completed subtasks should be shown.
+   *
+   * The rollup says "1 of 3 done" but the finished one is pruned, so there is
+   * otherwise no way to see which. Revealing is per-parent and opt-in, so a
+   * list does not fill with finished work by default.
+   */
+  revealCompletedUnder: ReadonlySet<string> = new Set(),
 ): { urgent: TaskNode[]; groups: Group[]; deferred: TaskNode[] } {
   const listTitles = new Map(lists.map((l) => [l.id, l.title ?? 'Untitled']))
   // Completed tasks linger in the class view only, and only when categorised
@@ -175,7 +185,8 @@ export function groupTasks(
   const active = tasks.filter(
     (t) =>
       !t.completed ||
-      (keepCompleted && lingers(t, now, { ...(defaultListId ? { defaultListId } : {}) })),
+      (keepCompleted && lingers(t, now, { ...(defaultListId ? { defaultListId } : {}) })) ||
+      (!!t.parent && revealCompletedUnder.has(t.parent)),
   )
 
   // Deferred tasks are returned rather than dropped. Hiding them with no way
@@ -220,7 +231,20 @@ export function groupTasks(
       // above Monday is answering the wrong question.
       nodes: sortByDue(bucket.nodes),
     }))
-    .sort((a, b) => (mode === 'due' ? a.key.localeCompare(b.key) : a.label.localeCompare(b.label)))
+    .sort((a, b) => {
+      // Due buckets have sortable keys by construction.
+      if (mode !== 'category') return a.key.localeCompare(b.key)
+
+      // Classes follow the user's chosen order. Alphabetical is a fallback for
+      // classes they have never moved, not a rule.
+      const rank = (label: string): number => {
+        const index = categoryOrder.indexOf(label)
+        return index === -1 ? Number.MAX_SAFE_INTEGER : index
+      }
+
+      const byRank = rank(a.label) - rank(b.label)
+      return byRank !== 0 ? byRank : a.label.localeCompare(b.label)
+    })
 
   return { urgent: sortByDue(urgent), groups, deferred: sortByDue(deferred) }
 }

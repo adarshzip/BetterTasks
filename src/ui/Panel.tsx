@@ -8,7 +8,7 @@ import {
   remainingEffort,
   type ViewMode,
 } from '@/model/grouping'
-import { buildTree, toTask } from '@/model/tree'
+import { buildTree, progressByParent, toTask } from '@/model/tree'
 import { useTasks } from '@/state/useTasks'
 import { useCalendar } from '@/state/useCalendar'
 import { isAtRisk } from '@/model/schedule'
@@ -20,6 +20,11 @@ import { QuickAdd } from './QuickAdd'
 import { Toast } from './Toast'
 import { ListMenu } from './ListMenu'
 import { BulkBar } from './BulkBar'
+import { TriageQueue } from './TriageQueue'
+import { SortableSection } from './SortableSection'
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core'
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { suggestionsFor, type Suggestion } from '@/model/triage'
 import { useKeyboard, SHORTCUTS } from './useKeyboard'
 import { flattenTree } from '@/model/tree'
 
@@ -28,6 +33,7 @@ export function Panel({ theme }: { theme: Theme }) {
   const calendar = useCalendar()
   const [mode, setMode] = useState<ViewMode>('due')
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
+  const [categoryOrder, setCategoryOrder] = useState<string[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   // The cursor is separate from the open editor: you move through the list
   // without opening anything, then press Enter on the one you want.
@@ -41,6 +47,8 @@ export function Panel({ theme }: { theme: Theme }) {
   // Sticky for the session: someone who wants the full field set should not
   // re-open it on every task.
   const [showMore, setShowMore] = useState(false)
+  const [dismissedTriage, setDismissedTriage] = useState<ReadonlySet<string>>(new Set())
+  const [revealed, setRevealed] = useState<ReadonlySet<string>>(new Set())
   const [query, setQuery] = useState('')
   // Search does not earn a permanent row; it opens from the header or `/`.
   const [searchOpen, setSearchOpen] = useState(false)
@@ -50,6 +58,7 @@ export function Panel({ theme }: { theme: Theme }) {
     void loadViewState().then((state) => {
       setMode(state.mode)
       setCollapsed(new Set(state.collapsed))
+      setCategoryOrder(state.categoryOrder)
     })
   }, [])
 
@@ -59,13 +68,14 @@ export function Panel({ theme }: { theme: Theme }) {
   }, [api.lists, activeListId])
 
   const persist = useCallback(
-    (next: { mode?: ViewMode; collapsed?: ReadonlySet<string> }) => {
+    (next: { mode?: ViewMode; collapsed?: ReadonlySet<string>; categoryOrder?: string[] }) => {
       void saveViewState({
         mode: next.mode ?? mode,
         collapsed: [...(next.collapsed ?? collapsed)],
+        categoryOrder: next.categoryOrder ?? categoryOrder,
       })
     },
-    [mode, collapsed],
+    [mode, collapsed, categoryOrder],
   )
 
   const toggleCollapse = useCallback(
@@ -98,8 +108,8 @@ export function Panel({ theme }: { theme: Theme }) {
   }, [tasks, query, api.lists])
 
   const { urgent, groups, deferred } = useMemo(
-    () => groupTasks(visible, api.lists, mode),
-    [visible, api.lists, mode],
+    () => groupTasks(visible, api.lists, mode, new Date(), categoryOrder, revealed),
+    [visible, api.lists, mode, categoryOrder, revealed],
   )
   const categories = useMemo(() => {
     const fromTasks = knownCategories(tasks, api.lists)
@@ -107,6 +117,16 @@ export function Panel({ theme }: { theme: Theme }) {
     return [...new Set([...fromCalendar, ...fromTasks])].sort((a, b) => a.localeCompare(b))
   }, [tasks, api.lists, calendar.courses])
   // Excludes tasks still shown in the list above, so nothing appears twice.
+  /** Tasks captured elsewhere whose titles still carry unapplied syntax. */
+  const suggestions = useMemo(
+    () => suggestionsFor(tasks, categories, dismissedTriage),
+    [tasks, categories, dismissedTriage],
+  )
+
+  // Computed over every loaded task, including completed ones, so finishing a
+  // subtask moves the rollup forward instead of shrinking it.
+  const progress = useMemo(() => progressByParent(tasks), [tasks])
+
   const completed = useMemo(() => {
     const defaultListId = api.lists[0]?.id
     const options = defaultListId ? { defaultListId } : {}
@@ -304,6 +324,81 @@ export function Panel({ theme }: { theme: Theme }) {
     [api],
   )
 
+  // A small activation distance keeps a click on the handle from starting a
+  // drag nobody intended.
+  const sectionSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+  )
+
+  /** Drops one class onto another's position. */
+  const reorderCategory = useCallback(
+    (from: string, to: string) => {
+      const current = categoryOrder.length ? [...categoryOrder] : groups.map((g) => g.label)
+      const fromIndex = current.indexOf(from)
+      const toIndex = current.indexOf(to)
+      if (fromIndex === -1 || toIndex === -1) return
+
+      const next = [...current]
+      const [moved] = next.splice(fromIndex, 1)
+      if (moved) next.splice(toIndex, 0, moved)
+
+      setCategoryOrder(next)
+      persist({ categoryOrder: next })
+    },
+    [categoryOrder, groups, persist],
+  )
+
+  /**
+   * Moves a class up or down.
+   *
+   * The stored order starts from whatever is on screen, so the first move
+   * pins the current arrangement rather than reshuffling everything the user
+   * had not thought about yet.
+   */
+  const moveCategory = useCallback(
+    (label: string, direction: -1 | 1) => {
+      const current = categoryOrder.length
+        ? [...categoryOrder]
+        : groups.map((group) => group.label)
+
+      const from = current.indexOf(label)
+      if (from === -1) return
+
+      const to = from + direction
+      if (to < 0 || to >= current.length) return
+
+      const next = [...current]
+      const [moved] = next.splice(from, 1)
+      if (moved) next.splice(to, 0, moved)
+
+      setCategoryOrder(next)
+      persist({ categoryOrder: next })
+    },
+    [categoryOrder, groups, persist],
+  )
+
+  /**
+   * Shows or hides a parent's completed subtasks.
+   *
+   * Completed tasks load lazily, so revealing also pulls the full history in:
+   * otherwise a subtask finished more than a week ago would be counted in the
+   * rollup but missing from the list it just expanded.
+   */
+  const toggleReveal = useCallback(
+    (id: string) => {
+      setRevealed((prev) => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else {
+          next.add(id)
+          if (!api.completedLoaded) void api.loadCompleted()
+        }
+        return next
+      })
+    },
+    [api],
+  )
+
   /** Incomplete tasks whose due date has already passed. */
   const overdueIds = useMemo(() => {
     const startOfToday = new Date()
@@ -320,6 +415,14 @@ export function Panel({ theme }: { theme: Theme }) {
     return out
   }, [urgent])
 
+  /** Sequential, like the other bulk paths: the Tasks API rate-limits readily. */
+  const applyAllSuggestions = useCallback(
+    async (items: Suggestion[]) => {
+      for (const suggestion of items) await api.applySuggestion(suggestion)
+    },
+    [api],
+  )
+
   const tree = (nodes: typeof urgent, showCategory: boolean) => (
     <TaskTree
       nodes={nodes}
@@ -333,6 +436,9 @@ export function Panel({ theme }: { theme: Theme }) {
       busy={calendar.busy}
       blocks={calendar.blocks}
       atRisk={atRisk}
+      progress={progress}
+      revealed={revealed}
+      onToggleReveal={toggleReveal}
       flashId={flashId}
       showMore={showMore}
       onToggleMore={setShowMore}
@@ -433,6 +539,16 @@ export function Panel({ theme }: { theme: Theme }) {
 
         {api.status === 'ready' && (
           <>
+            <TriageQueue
+              theme={theme}
+              suggestions={suggestions}
+              onApply={(suggestion) => void api.applySuggestion(suggestion)}
+              onApplyAll={() => void applyAllSuggestions(suggestions)}
+              onDismiss={(taskId) =>
+                setDismissedTriage((prev) => new Set([...prev, taskId]))
+              }
+            />
+
             {selection.size > 0 && (
               <BulkBar
                 theme={theme}
@@ -486,11 +602,49 @@ export function Panel({ theme }: { theme: Theme }) {
               </Section>
             )}
 
-            {groups.map((group) => (
-              <Section key={group.key} title={group.label} theme={theme} effort={group.effort}>
-                {tree(group.nodes, mode === 'due')}
-              </Section>
-            ))}
+            {mode === 'category' ? (
+              <DndContext
+                sensors={sectionSensors}
+                collisionDetection={closestCenter}
+                onDragEnd={({ active, over }) => {
+                  if (over && active.id !== over.id) {
+                    reorderCategory(String(active.id), String(over.id))
+                  }
+                }}
+              >
+                <SortableContext
+                  items={groups.map((group) => group.label)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  {groups.map((group, index) => (
+                    <SortableSection key={group.key} id={group.label} theme={theme}>
+                      {(handle) => (
+                        <Section
+                          title={group.label}
+                          theme={theme}
+                          effort={group.effort}
+                          handle={handle}
+                          reorder={{
+                            label: group.label,
+                            canUp: index > 0,
+                            canDown: index < groups.length - 1,
+                            onMove: moveCategory,
+                          }}
+                        >
+                          {tree(group.nodes, false)}
+                        </Section>
+                      )}
+                    </SortableSection>
+                  ))}
+                </SortableContext>
+              </DndContext>
+            ) : (
+              groups.map((group) => (
+                <Section key={group.key} title={group.label} theme={theme} effort={group.effort}>
+                  {tree(group.nodes, mode === 'due')}
+                </Section>
+              ))
+            )}
 
             {urgent.length === 0 && groups.length === 0 && (
               <Notice theme={theme}>Nothing due. Nice work.</Notice>
@@ -565,8 +719,8 @@ function Header({
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
-      <strong style={{ fontSize: 13, flex: 1 }}>BetterTasks</strong>
-
+      {/* No title here: the browser's own side panel header already shows it,
+          and repeating it cost a third of the row. */}
       <div style={{ display: 'flex', border: `1px solid ${theme.border}`, borderRadius: 999 }}>
         {(['today', 'due', 'category'] as const).map((value) => (
           <button
@@ -595,6 +749,8 @@ function Header({
         ))}
       </div>
 
+      <span style={{ flex: 1 }} />
+
       {children}
 
       <button
@@ -617,6 +773,8 @@ function Section({
   open,
   effort,
   action,
+  reorder,
+  handle,
   onToggle,
   children,
 }: {
@@ -627,30 +785,67 @@ function Section({
   open?: boolean
   effort?: number | undefined
   action?: { label: string; onClick: () => void } | undefined
+  handle?: React.ReactNode
+  reorder?:
+    | {
+        label: string
+        canUp: boolean
+        canDown: boolean
+        onMove: (label: string, direction: -1 | 1) => void
+      }
+    | undefined
   onToggle?: () => void
   children: React.ReactNode
 }) {
   return (
     <section style={{ marginBottom: 14 }}>
-      <div
-        onClick={onToggle}
-        {...(collapsible
-          ? { role: 'button', 'aria-expanded': !!open, 'aria-label': title }
-          : {})}
-        style={{
-          fontSize: 11,
-          fontWeight: 600,
-          textTransform: 'uppercase',
-          letterSpacing: 0.6,
-          color: accent ? '#f28b82' : theme.muted,
-          marginBottom: 4,
-          cursor: collapsible ? 'pointer' : 'default',
-        }}
-      >
-        {collapsible && <span style={{ marginRight: 4 }}>{open ? '▾' : '▸'}</span>}
-        {title}
-        {/* Remaining effort, so a heavy week is visible before you open it. */}
-        {!!effort && <span style={{ color: theme.muted }}> · {formatEffort(effort)}</span>}
+      {/* Flex rather than a float, so the controls sit at the right edge with
+          real space between them and the label. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+        <div
+          onClick={onToggle}
+          {...(collapsible
+            ? { role: 'button', 'aria-expanded': !!open, 'aria-label': title }
+            : {})}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: 11,
+            fontWeight: 600,
+            textTransform: 'uppercase',
+            letterSpacing: 0.6,
+            color: accent ? '#f28b82' : theme.muted,
+            cursor: collapsible ? 'pointer' : 'default',
+          }}
+        >
+          {collapsible && <span style={{ marginRight: 4 }}>{open ? '▾' : '▸'}</span>}
+          {title}
+          {/* Remaining effort, so a heavy week is visible before you open it. */}
+          {!!effort && <span style={{ color: theme.muted }}> · {formatEffort(effort)}</span>}
+        </div>
+
+        {reorder && (
+          <>
+            <ReorderButton
+              theme={theme}
+              label={`Move ${reorder.label} up`}
+              disabled={!reorder.canUp}
+              onClick={() => reorder.onMove(reorder.label, -1)}
+            >
+              ↑
+            </ReorderButton>
+            <ReorderButton
+              theme={theme}
+              label={`Move ${reorder.label} down`}
+              disabled={!reorder.canDown}
+              onClick={() => reorder.onMove(reorder.label, 1)}
+            >
+              ↓
+            </ReorderButton>
+          </>
+        )}
+
+        {handle}
       </div>
 
       {action && (
@@ -790,7 +985,66 @@ function Shortcuts({ theme }: { theme: Theme }) {
           <span style={{ color: theme.muted }}>{description}</span>
         </Fragment>
       ))}
+
+      <div style={{ gridColumn: '1 / -1', marginTop: 6, color: theme.text, fontWeight: 600 }}>
+        Capture syntax
+      </div>
+      <div style={{ gridColumn: '1 / -1', color: theme.muted, marginBottom: 2 }}>
+        Works in the add field and in tasks captured on your phone.
+      </div>
+
+      {CAPTURE_SYNTAX.map(([example, description]) => (
+        <Fragment key={example}>
+          <kbd style={{ color: theme.accent, fontFamily: 'inherit', whiteSpace: 'nowrap' }}>
+            {example}
+          </kbd>
+          <span style={{ color: theme.muted }}>{description}</span>
+        </Fragment>
+      ))}
     </div>
+  )
+}
+
+/**
+ * The convention that lets a task typed on a phone arrive fully tagged. Shown
+ * here because a syntax nobody can find is a syntax nobody uses.
+ */
+const CAPTURE_SYNTAX: [string, string][] = [
+  ['math 458', 'Class, from a course code'],
+  ['#thesis', 'Class, for anything not a course'],
+  ['fri, tomorrow', 'Due date'],
+  ['fri 5pm', 'Due date with a time'],
+  ['90m, 2h', 'Effort estimate'],
+  ['!1 !2 !3', 'Priority, 1 highest'],
+]
+
+function ReorderButton({
+  theme,
+  label,
+  disabled,
+  onClick,
+  children,
+}: {
+  theme: Theme
+  label: string
+  disabled: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        all: 'unset',
+        cursor: disabled ? 'default' : 'pointer',
+        padding: '0 4px',
+        color: disabled ? theme.border : theme.muted,
+      }}
+    >
+      {children}
+    </button>
   )
 }
 

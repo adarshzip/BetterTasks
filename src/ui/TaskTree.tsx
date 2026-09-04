@@ -38,6 +38,9 @@ interface Props {
   busy: Interval[]
   blocks: Map<string, { eventId: string; start: Date; end: Date }>
   atRisk: (node: TaskNode) => boolean
+  progress: Map<string, { done: number; total: number }>
+  revealed: ReadonlySet<string>
+  onToggleReveal: (id: string) => void
   flashId: string | null
   showMore: boolean
   onToggleMore: (next: boolean) => void
@@ -66,6 +69,9 @@ export function TaskTree({
   busy,
   blocks,
   atRisk,
+  progress,
+  revealed,
+  onToggleReveal,
   flashId,
   showMore,
   onToggleMore,
@@ -196,6 +202,9 @@ export function TaskTree({
         categoryColour={colourOf(categoryFor(node))}
         block={blocks.get(node.raw.id) ?? null}
         atRisk={atRisk(node)}
+        progress={progress.get(node.raw.id)}
+        revealed={revealed.has(node.raw.id)}
+        onToggleReveal={onToggleReveal}
         showCategory={showPillFor(node)}
         collapsed={collapsed.has(node.raw.id)}
         selected={selected}

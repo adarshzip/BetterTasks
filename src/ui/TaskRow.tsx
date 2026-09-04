@@ -2,7 +2,8 @@ import { useEffect, useRef } from 'react'
 import { useDraft } from './Draft'
 import type { TaskNode } from '@/model/types'
 import type { Theme } from './theme'
-import { progressOf } from '@/model/tree'
+import type { Progress } from '@/model/tree'
+import { notePreview } from '@/model/metadata'
 import { describeEnd } from '@/model/recurrence'
 
 /** Width of one nesting level, and of the connector gutter beside it. */
@@ -17,6 +18,10 @@ interface Props {
   block: { start: Date; end: Date } | null
   /** True when the task needs more time than remains free before it is due. */
   atRisk: boolean
+  /** Counts completed subtasks, including ones no longer shown in the tree. */
+  progress: Progress | undefined
+  revealed: boolean
+  onToggleReveal: (id: string) => void
   showCategory: boolean
   collapsed: boolean
   selected: boolean
@@ -39,6 +44,9 @@ export function TaskRow({
   categoryColour,
   block,
   atRisk,
+  progress,
+  revealed,
+  onToggleReveal,
   showCategory,
   collapsed,
   selected,
@@ -70,8 +78,8 @@ export function TaskRow({
     if (next.trim()) onRename(node.raw.id, next.trim())
   })
 
-  const progress = progressOf(node)
   const hasChildren = node.children.length > 0
+  const preview = notePreview(node.notes)
   const overdue = node.due !== null && !node.completed && node.due < new Date()
 
   return (
@@ -183,6 +191,24 @@ export function TaskRow({
           </div>
         )}
 
+        {/* A one-line preview of the details, so opening the editor is not the
+            only way to remember what a task was about. Hidden while selected,
+            where the full note is already on screen. */}
+        {!selected && preview && (
+          <div
+            style={{
+              fontSize: 11,
+              color: theme.muted,
+              marginTop: 1,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {preview}
+          </div>
+        )}
+
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, flexWrap: 'wrap' }}>
           {showCategory && <Pill label={category} color={categoryColour} />}
 
@@ -217,8 +243,18 @@ export function TaskRow({
             </span>
           )}
 
-          {progress.total > 0 && (
-            <Progress done={progress.done} total={progress.total} theme={theme} />
+          {progress && progress.total > 0 && (
+            <ProgressBar
+              done={progress.done}
+              total={progress.total}
+              theme={theme}
+              revealed={revealed}
+              // The rollup is the natural place to ask "which one is done?".
+              onClick={(event) => {
+                event.stopPropagation()
+                onToggleReveal(node.raw.id)
+              }}
+            />
           )}
         </div>
       </div>
@@ -262,10 +298,33 @@ function Pill({ label, color }: { label: string; color: string }) {
   )
 }
 
-function Progress({ done, total, theme }: { done: number; total: number; theme: Theme }) {
+function ProgressBar({
+  done,
+  total,
+  theme,
+  revealed,
+  onClick,
+}: {
+  done: number
+  total: number
+  theme: Theme
+  revealed: boolean
+  onClick: (event: React.MouseEvent) => void
+}) {
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-      <span style={{ fontSize: 11, color: theme.muted }}>
+    <button
+      aria-label={revealed ? 'Hide completed subtasks' : 'Show completed subtasks'}
+      aria-pressed={revealed}
+      onClick={onClick}
+      style={{
+        all: 'unset',
+        cursor: 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+      }}
+    >
+      <span style={{ fontSize: 11, color: revealed ? theme.accent : theme.muted }}>
         {done}/{total}
       </span>
       <span style={{ width: 32, height: 3, borderRadius: 2, background: theme.border }}>
@@ -279,7 +338,7 @@ function Progress({ done, total, theme }: { done: number; total: number; theme: 
           }}
         />
       </span>
-    </span>
+    </button>
   )
 }
 

@@ -50,6 +50,7 @@ export interface TasksApi {
   load: (options?: { silent?: boolean }) => Promise<void>
   loadCompleted: () => Promise<void>
   signIn: () => Promise<void>
+  signOut: () => Promise<void>
   dismissError: () => void
   dismissUndo: () => void
   runUndo: () => Promise<void>
@@ -168,6 +169,25 @@ export function useTasks(): TasksApi {
   }, [load])
 
   /**
+   * Disconnects the account.
+   *
+   * Revokes the grant at Google and clears the cached token and account hint,
+   * so the next sign-in can pick a different account rather than being pinned
+   * silently to this one.
+   */
+  const signOutOfAccount = useCallback(async () => {
+    try {
+      await send({ type: 'signOut' })
+    } catch {
+      // Local state is cleared either way; a failed revoke is not worth a banner.
+    }
+    setTasks([])
+    setLists([])
+    setUndo(null)
+    setStatus('signedOut')
+  }, [])
+
+  /**
    * Applies a mutation locally, sends the request, and restores the previous
    * array if it fails. `undoLabel` opts the mutation into the undo slot.
    */
@@ -217,13 +237,7 @@ export function useTasks(): TasksApi {
         ...(extras?.pri ? { pri: extras.pri } : {}),
       })
 
-      // A temporary id keeps React keys stable until the reload replaces it.
-      // Append rather than insert at the top, so an undated list reads in the
-      // order things were added, like the native sidebar.
-      const siblings = current.current
-        .filter((t) => t.listId === listId && (t.parent ?? null) === (parent ?? null))
-        .sort((a, b) => (a.position ?? '').localeCompare(b.position ?? ''))
-      const previous = siblings.at(-1)?.id
+      const previous = lastAnchor(current.current, listId, parent)
 
       const task: WireTask = {
         id: `pending-${crypto.randomUUID()}`,
@@ -241,18 +255,43 @@ export function useTasks(): TasksApi {
       // `pending-` id would point at a row that no longer exists.
       let created: string | null = null
 
-      await run({ type: 'create', task }, async () => {
-        const response = await send<{ id?: string }>({
+      // A create whose reconcile fails leaves this optimistic row behind with
+      // an id the server has never seen, so every later action on it fails.
+      // Rolling it back is better than leaving a task that cannot be touched.
+      let reconciled = false
+
+      const body = { title: stored, ...(due ? { due } : {}), ...(notes ? { notes } : {}) }
+
+      const insert = (anchor: string | undefined) =>
+        send<{ id?: string }>({
           type: 'createTask',
           listId,
-          task: { title: stored, ...(due ? { due } : {}), ...(notes ? { notes } : {}) },
+          task: body,
           ...(parent ? { parent } : {}),
-          ...(previous ? { previous } : {}),
+          ...(anchor ? { previous: anchor } : {}),
         })
+
+      await run({ type: 'create', task }, async () => {
+        // Ordering is a nicety; creating the task is not. If the anchor is
+        // stale for any reason, fall back to an unanchored insert rather than
+        // losing what the user typed.
+        const response = previous
+          ? await insert(previous).catch(() => insert(undefined))
+          : await insert(undefined)
+
         created = response?.id ?? null
         // The server assigns the real id and position, so reconcile quietly.
         await load({ silent: true })
+        reconciled = true
       })
+
+      if (!reconciled) {
+        setTasks((prev) => prev.filter((t) => t.id !== task.id))
+        if (created) {
+          // The task exists on the server; only our view of it failed.
+          setError('Task created, but the list could not be refreshed. Reload to see it.')
+        }
+      }
 
       return created
     },
@@ -270,10 +309,7 @@ export function useTasks(): TasksApi {
     async (listId: string, titles: string[], parent?: string) => {
       // Each new task is placed after the previous one, so a pasted list keeps
       // the order it was pasted in rather than arriving reversed.
-      let previous = current.current
-        .filter((t) => t.listId === listId && (t.parent ?? null) === (parent ?? null))
-        .sort((a, b) => (a.position ?? '').localeCompare(b.position ?? ''))
-        .at(-1)?.id
+      let previous = lastAnchor(current.current, listId, parent)
 
       for (const title of titles) {
         const trimmed = title.trim()
@@ -682,6 +718,7 @@ export function useTasks(): TasksApi {
     load,
     loadCompleted,
     signIn,
+    signOut: signOutOfAccount,
     dismissError: () => setError(''),
     dismissUndo: () => setUndo(null),
     runUndo,
@@ -704,6 +741,36 @@ export function useTasks(): TasksApi {
     renameList,
     clearCompleted,
   }
+}
+
+/**
+ * The last task a new one can be inserted after.
+ *
+ * Append rather than insert at the top, so an undated list reads in the order
+ * things were added, like the native sidebar.
+ *
+ * The anchor has to be a task the server will accept. Completed tasks are
+ * hidden in Google Tasks and are rejected as a `previous` target, and an
+ * optimistic row whose create has not reconciled yet has an id the server has
+ * never seen. Either one makes the insert fail outright, which broke adding
+ * tasks entirely once completed history was loaded.
+ */
+function lastAnchor(
+  tasks: WireTask[],
+  listId: string,
+  parent: string | undefined,
+): string | undefined {
+  return tasks
+    .filter(
+      (t) =>
+        t.listId === listId &&
+        (t.parent ?? null) === (parent ?? null) &&
+        t.status !== 'completed' &&
+        !t.hidden &&
+        !t.id.startsWith('pending-'),
+    )
+    .sort((a, b) => (a.position ?? '').localeCompare(b.position ?? ''))
+    .at(-1)?.id
 }
 
 function message(err: unknown): string {

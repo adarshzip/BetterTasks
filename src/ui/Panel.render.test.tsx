@@ -6,7 +6,7 @@
  * side panel does so any render-time failure surfaces here instead of as a
  * white rectangle.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react'
 import { Panel } from './Panel'
@@ -51,7 +51,19 @@ const SNAPSHOT = {
   ],
 }
 
+/**
+ * The fixtures use fixed dates and the panel reads the real clock, so without
+ * freezing time these tests change meaning as the calendar moves: a task
+ * written as "two days away" became "today" and the suite failed on a day
+ * nobody had touched the code.
+ *
+ * Only Date is faked. React's scheduling and the panel's own timeouts need
+ * real timers.
+ */
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date(2026, 8, 2, 9, 0))
+
   vi.stubGlobal('chrome', {
     // JSON.parse(JSON.stringify(...)) is not decoration: chrome.runtime
     // .sendMessage serializes with JSON, and sending Date objects through it
@@ -107,6 +119,10 @@ const mount = async () => {
   })
   return container
 }
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('Panel', () => {
   it('renders without throwing', async () => {
@@ -637,6 +653,56 @@ describe('Panel interactions', () => {
     expect((byLabel(container, 'Task title') as HTMLInputElement).value).toBe('No date')
   })
 
+  // Completed tasks are hidden in Google Tasks and are rejected as a
+  // `previous` target, which broke adding entirely once history was loaded.
+  it('never anchors a new task to a completed one', async () => {
+    const container = await mount()
+
+    // Complete a task, so a completed sibling exists in local state.
+    await click(byLabel(container, 'Complete Project'))
+    sent.length = 0
+
+    const field = byLabel(container, 'Add a task') as HTMLInputElement
+    await typeInto(field, 'after a completed task')
+    await act(async () => {
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+
+    const created = sent.find((r) => r.type === 'createTask') as { previous?: string }
+    expect(created).toBeTruthy()
+    expect(created.previous).not.toBe('p')
+  })
+
+  it('still creates the task when the anchor is rejected', async () => {
+    const container = await mount()
+
+    const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>
+    const original = runtime.getMockImplementation() as (
+      request: { type: string },
+    ) => Promise<unknown>
+    // First insert fails the way a stale anchor does; the retry must not.
+    let firstInsert = true
+    runtime.mockImplementation(async (request: { type: string }) => {
+      if (request.type === 'createTask' && firstInsert) {
+        firstInsert = false
+        sent.push(request)
+        throw new Error('Invalid value for previous')
+      }
+      return original(request)
+    })
+
+    const field = byLabel(container, 'Add a task') as HTMLInputElement
+    await typeInto(field, 'survives a bad anchor')
+    await act(async () => {
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+
+    const inserts = sent.filter((r) => r.type === 'createTask')
+    expect(inserts).toHaveLength(2)
+    // The retry drops the anchor rather than losing what was typed.
+    expect(inserts[1]).not.toHaveProperty('previous')
+  })
+
   it('creates one subtask per line when a list is pasted', async () => {
     const container = await mount()
     await click(container.querySelector('div[style*="cursor: pointer"]'))
@@ -767,6 +833,47 @@ describe('Panel interactions', () => {
       (el) => el.textContent === 'read chapters 4-5',
     )
     expect(preview).toHaveLength(0)
+  })
+
+  // Sign-out existed in the worker from the start but had no way to reach it,
+  // so there was no way to switch accounts.
+  it('offers sign out from the list menu', async () => {
+    const container = await mount()
+    await click(byLabel(container, 'List options'))
+
+    const items = [...container.querySelectorAll('button')].map((b) => b.textContent)
+    expect(items).toContain('Sign out')
+  })
+
+  // A dismissal that lasts only until the panel closes is not a dismissal.
+  it('remembers dismissed triage suggestions', async () => {
+    const container = await mount()
+    await click(byLabel(container, 'Show captured tasks'))
+    await click(byLabel(container, 'Leave qbio 401 HW1 alone'))
+
+    const saved = (chrome.storage.local.set as ReturnType<typeof vi.fn>).mock.calls.at(-1)
+    expect(JSON.stringify(saved)).toContain('dismissedTriage')
+    expect(JSON.stringify(saved)).toContain('captured')
+  })
+
+  it('rolls back an optimistic task when the create fails', async () => {
+    const container = await mount()
+    const before = container.textContent
+
+    const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>
+    runtime.mockImplementationOnce(async () => {
+      throw new Error('offline')
+    })
+
+    const field = byLabel(container, 'Add a task') as HTMLInputElement
+    await typeInto(field, 'doomed task')
+    await act(async () => {
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+
+    // No stranded row with an id the server has never seen.
+    expect(container.textContent).not.toContain('doomed task')
+    expect(container.textContent?.length).toBeLessThanOrEqual((before ?? '').length + 200)
   })
 
   it('shows drag handles when a group holds one list', async () => {

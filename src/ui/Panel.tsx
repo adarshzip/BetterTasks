@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import type { Theme } from './theme'
 import {
+  defaultListId,
   groupTasks,
   knownCategories,
   lingers,
@@ -59,6 +60,7 @@ export function Panel({ theme }: { theme: Theme }) {
       setMode(state.mode)
       setCollapsed(new Set(state.collapsed))
       setCategoryOrder(state.categoryOrder)
+      setDismissedTriage(new Set(state.dismissedTriage))
     })
   }, [])
 
@@ -68,14 +70,20 @@ export function Panel({ theme }: { theme: Theme }) {
   }, [api.lists, activeListId])
 
   const persist = useCallback(
-    (next: { mode?: ViewMode; collapsed?: ReadonlySet<string>; categoryOrder?: string[] }) => {
+    (next: {
+      mode?: ViewMode
+      collapsed?: ReadonlySet<string>
+      categoryOrder?: string[]
+      dismissedTriage?: ReadonlySet<string>
+    }) => {
       void saveViewState({
         mode: next.mode ?? mode,
         collapsed: [...(next.collapsed ?? collapsed)],
         categoryOrder: next.categoryOrder ?? categoryOrder,
+        dismissedTriage: [...(next.dismissedTriage ?? dismissedTriage)],
       })
     },
-    [mode, collapsed, categoryOrder],
+    [mode, collapsed, categoryOrder, dismissedTriage],
   )
 
   const toggleCollapse = useCallback(
@@ -128,8 +136,8 @@ export function Panel({ theme }: { theme: Theme }) {
   const progress = useMemo(() => progressByParent(tasks), [tasks])
 
   const completed = useMemo(() => {
-    const defaultListId = api.lists[0]?.id
-    const options = defaultListId ? { defaultListId } : {}
+    const defaultList = defaultListId(api.lists)
+    const options = defaultList ? { defaultListId: defaultList } : {}
     // In the due view nothing lingers, so everything completed belongs here.
     const shown = (t: (typeof tasks)[number]) =>
       mode === 'category' && lingers(t, new Date(), options)
@@ -415,6 +423,24 @@ export function Panel({ theme }: { theme: Theme }) {
     return out
   }, [urgent])
 
+  /**
+   * Records a declined suggestion.
+   *
+   * Ids of tasks that no longer exist are pruned on the way out, so the stored
+   * list cannot grow forever as tasks are completed and deleted.
+   */
+  const dismissSuggestion = useCallback(
+    (taskId: string) => {
+      setDismissedTriage((prev) => {
+        const live = new Set(api.tasks.map((task) => task.id))
+        const next = new Set([...prev, taskId].filter((id) => live.has(id)))
+        persist({ dismissedTriage: next })
+        return next
+      })
+    },
+    [api.tasks, persist],
+  )
+
   /** Sequential, like the other bulk paths: the Tasks API rate-limits readily. */
   const applyAllSuggestions = useCallback(
     async (items: Suggestion[]) => {
@@ -511,6 +537,7 @@ export function Panel({ theme }: { theme: Theme }) {
           onCreate={(title) => void api.createList(title)}
           onRename={(id, title) => void api.renameList(id, title)}
           onClearCompleted={(id) => void api.clearCompleted(id)}
+          onSignOut={() => void api.signOut()}
         />
       </Header>
 
@@ -544,9 +571,7 @@ export function Panel({ theme }: { theme: Theme }) {
               suggestions={suggestions}
               onApply={(suggestion) => void api.applySuggestion(suggestion)}
               onApplyAll={() => void applyAllSuggestions(suggestions)}
-              onDismiss={(taskId) =>
-                setDismissedTriage((prev) => new Set([...prev, taskId]))
-              }
+              onDismiss={(taskId) => dismissSuggestion(taskId)}
             />
 
             {selection.size > 0 && (
@@ -647,7 +672,23 @@ export function Panel({ theme }: { theme: Theme }) {
             )}
 
             {urgent.length === 0 && groups.length === 0 && (
-              <Notice theme={theme}>Nothing due. Nice work.</Notice>
+              <Notice theme={theme}>
+                {api.tasks.length === 0 ? (
+                  // A brand-new account otherwise sees a blank panel with no
+                  // clue that anything works.
+                  <>
+                    <div style={{ marginBottom: 6 }}>No tasks yet.</div>
+                    <div>
+                      Add one above. Try <code>math 458 pset 4 fri 90m</code> to set the class,
+                      due date, and effort in one line, or press{' '}
+                      <kbd style={{ color: theme.accent, fontFamily: 'inherit' }}>?</kbd> for
+                      everything else.
+                    </div>
+                  </>
+                ) : (
+                  'Nothing due. Nice work.'
+                )}
+              </Notice>
             )}
 
             {deferred.length > 0 && (

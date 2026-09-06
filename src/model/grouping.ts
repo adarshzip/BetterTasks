@@ -122,6 +122,22 @@ export function isUrgent(task: Task, now = new Date()): boolean {
 }
 
 /**
+ * The user's default task list.
+ *
+ * Google does not document `tasklists.list` as returning the default first, so
+ * this is an assumption, and it decides which tasks count as categorised and
+ * therefore which get a pill. It lives in one place so it can be corrected
+ * once if a reliable signal turns up, rather than in four inline copies.
+ *
+ * The list Google creates for a new account is titled "My Tasks", so that is
+ * preferred when present, falling back to the first list returned.
+ */
+export function defaultListId(lists: GTaskList[]): string | undefined {
+  const named = lists.find((list) => list.title?.trim().toLowerCase() === 'my tasks')
+  return (named ?? lists[0])?.id
+}
+
+/**
  * Whether a task has been deliberately categorised.
  *
  * Two setups both count, because both are supported: an explicit class in the
@@ -177,7 +193,7 @@ export function groupTasks(
   const listTitles = new Map(lists.map((l) => [l.id, l.title ?? 'Untitled']))
   // Completed tasks linger in the class view only, and only when categorised
   // and not yet past due. The due view is strictly what is still outstanding.
-  const defaultListId = lists[0]?.id
+  const defaultList = defaultListId(lists)
   const keepCompleted = mode === 'category'
   // The today view answers "what am I doing now", so it collapses to a single
   // group of everything already due, with no bucketing at all.
@@ -185,7 +201,7 @@ export function groupTasks(
   const active = tasks.filter(
     (t) =>
       !t.completed ||
-      (keepCompleted && lingers(t, now, { ...(defaultListId ? { defaultListId } : {}) })) ||
+      (keepCompleted && lingers(t, now, { ...(defaultList ? { defaultListId: defaultList } : {}) })) ||
       (!!t.parent && revealCompletedUnder.has(t.parent)),
   )
 

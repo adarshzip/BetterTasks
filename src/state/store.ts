@@ -11,10 +11,22 @@ export interface ViewState {
   collapsed: string[]
   /** The order classes appear in, for those the user has moved. */
   categoryOrder: string[]
+  /**
+   * Triage suggestions the user declined.
+   *
+   * Persisted because a dismissal that lasts only until the panel closes is
+   * not a dismissal: the same suggestion comes back forever.
+   */
+  dismissedTriage: string[]
 }
 
 const KEY = 'bettertasks:view'
-const DEFAULT: ViewState = { mode: 'due', collapsed: [], categoryOrder: [] }
+const DEFAULT: ViewState = {
+  mode: 'due',
+  collapsed: [],
+  categoryOrder: [],
+  dismissedTriage: [],
+}
 
 export async function loadViewState(): Promise<ViewState> {
   try {
@@ -24,6 +36,7 @@ export async function loadViewState(): Promise<ViewState> {
       mode: value?.mode === 'category' || value?.mode === 'today' ? value.mode : DEFAULT.mode,
       collapsed: Array.isArray(value?.collapsed) ? value.collapsed : [],
       categoryOrder: Array.isArray(value?.categoryOrder) ? value.categoryOrder : [],
+      dismissedTriage: Array.isArray(value?.dismissedTriage) ? value.dismissedTriage : [],
     }
   } catch {
     return DEFAULT

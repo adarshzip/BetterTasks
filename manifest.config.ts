@@ -21,16 +21,21 @@ if (!local.oauthClientId) {
 export default defineManifest({
   manifest_version: 3,
   name: 'BetterTasks',
-  version: '0.1.0',
+  version: '1.0.0',
   description: 'A better Google Tasks panel for Google Calendar.',
 
   // Pinning the key fixes the extension id, which the OAuth client is bound to.
   ...(local.key ? { key: local.key } : {}),
 
   permissions: ['identity', 'storage', 'sidePanel'],
+  // Narrowed to the endpoints actually called. `www.googleapis.com/*` granted
+  // reach over every Google API, which is more than this needs and more than a
+  // store reviewer should be asked to accept.
   host_permissions: [
-    'https://tasks.googleapis.com/*',
-    'https://www.googleapis.com/*',
+    'https://tasks.googleapis.com/tasks/v1/*',
+    'https://www.googleapis.com/calendar/v3/*',
+    'https://www.googleapis.com/oauth2/v3/userinfo',
+    'https://oauth2.googleapis.com/revoke*',
   ],
 
   // No `oauth2` block: that key drives chrome.identity.getAuthToken, which is
@@ -42,8 +47,21 @@ export default defineManifest({
     type: 'module',
   },
 
+  icons: {
+    16: 'icons/icon-16.png',
+    32: 'icons/icon-32.png',
+    48: 'icons/icon-48.png',
+    128: 'icons/icon-128.png',
+  },
+
   // Clicking the toolbar icon opens the side panel; see the service worker.
-  action: { default_title: 'BetterTasks' },
+  action: {
+    default_title: 'BetterTasks',
+    default_icon: {
+      16: 'icons/icon-16.png',
+      32: 'icons/icon-32.png',
+    },
+  },
 
   side_panel: { default_path: 'src/sidepanel/index.html' },
 })

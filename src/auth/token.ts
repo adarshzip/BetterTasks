@@ -29,6 +29,10 @@ declare const __OAUTH_CLIENT_ID__: string
 const SCOPES = [
   'https://www.googleapis.com/auth/tasks',
   'https://www.googleapis.com/auth/calendar',
+  // Not for reading mail or a profile: this exists purely so silent renewals
+  // can name the account. Without it Google answers `interaction_required`,
+  // because with more than one signed-in account it will not guess.
+  'https://www.googleapis.com/auth/userinfo.email',
 ]
 
 /** Renew a little early so a request never sets off mid-flight. */
@@ -55,13 +59,24 @@ interface CachedToken {
 const SCOPE_KEY = SCOPES.join(' ')
 
 const CACHE_KEY = 'bettertasks:token'
+const ACCOUNT_KEY = 'bettertasks:account'
+
+/** Where the token lives; see the note on the cache below. */
+const store = (): chrome.storage.StorageArea => chrome.storage.local
 
 /**
- * Module scope is only a fast path. The real cache is chrome.storage.session,
+ * Module scope is only a fast path. The real cache is chrome.storage.local,
  * because the service worker is torn down constantly and a fresh worker would
- * otherwise have to re-authorize on every single wake. Session storage is
- * in-memory and cleared when the browser closes, so the token never touches
- * disk.
+ * otherwise re-authorize on every wake.
+ *
+ * `local` rather than `session`: session storage is cleared when the browser
+ * closes, which meant every Edge restart began with no token and, when the
+ * silent renewal failed, a visible sign-in prompt.
+ *
+ * The tradeoff is that an access token now rests on disk in the extension's
+ * own storage area. It is scoped to Tasks and Calendar, expires in an hour,
+ * and is cleared on sign-out. Anyone who can read it can already read the
+ * browser profile it lives in.
  */
 let cached: CachedToken | null = null
 
@@ -79,7 +94,7 @@ function usable(entry: CachedToken | null): entry is CachedToken {
 async function readCache(): Promise<CachedToken | null> {
   if (usable(cached)) return cached
   try {
-    const stored = await chrome.storage.session.get(CACHE_KEY)
+    const stored = await store().get(CACHE_KEY)
     const entry = stored[CACHE_KEY] as CachedToken | undefined
     if (usable(entry ?? null)) {
       cached = entry!
@@ -94,10 +109,32 @@ async function readCache(): Promise<CachedToken | null> {
 async function writeCache(entry: CachedToken): Promise<void> {
   cached = entry
   try {
-    await chrome.storage.session.set({ [CACHE_KEY]: entry })
+    await store().set({ [CACHE_KEY]: entry })
   } catch {
     // Losing the shared cache only costs an extra silent renewal.
   }
+}
+
+/**
+ * A silent renewal already under way, shared by every caller that arrives
+ * while it runs.
+ *
+ * Loading fires one request per task list in parallel, so an expired token
+ * would otherwise start a separate authorization flow for each of them at the
+ * same moment. Interactive sign-in is deliberately not shared: it is rare,
+ * user-initiated, and should not be handed a flow someone else started.
+ */
+let silentRenewal: Promise<string> | null = null
+
+function renewSilently(): Promise<string> {
+  if (!silentRenewal) {
+    silentRenewal = authorize(false)
+    // Cleared however it settles, so a failure does not poison later attempts.
+    void silentRenewal.catch(() => undefined).then(() => {
+      silentRenewal = null
+    })
+  }
+  return silentRenewal
 }
 
 export async function getToken(interactive: boolean): Promise<string> {
@@ -107,7 +144,7 @@ export async function getToken(interactive: boolean): Promise<string> {
   // Try silent first even when interactive is allowed: if consent was already
   // granted and the Google session is live, this refreshes with no popup.
   try {
-    return await authorize(false)
+    return await renewSilently()
   } catch (error) {
     if (!interactive) throw error
   }
@@ -116,7 +153,7 @@ export async function getToken(interactive: boolean): Promise<string> {
 }
 
 async function authorize(interactive: boolean): Promise<string> {
-  const url = buildAuthUrl(interactive)
+  const url = buildAuthUrl(interactive, await readAccount())
 
   let redirect: string | undefined
   try {
@@ -136,12 +173,18 @@ async function authorize(interactive: boolean): Promise<string> {
   return parseRedirect(redirect, interactive)
 }
 
-function buildAuthUrl(interactive: boolean): string {
+function buildAuthUrl(interactive: boolean, account: string | null): string {
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth')
   url.searchParams.set('client_id', __OAUTH_CLIENT_ID__)
   url.searchParams.set('response_type', 'token')
   url.searchParams.set('redirect_uri', chrome.identity.getRedirectURL())
   url.searchParams.set('scope', SCOPES.join(' '))
+
+  // Naming the account is what lets a silent renewal succeed. Without it,
+  // Google refuses to choose between signed-in accounts and returns
+  // `interaction_required`, which surfaces as a sign-in prompt on every
+  // browser restart.
+  if (account) url.searchParams.set('login_hint', account)
 
   // prompt=none makes the silent path fail fast instead of showing a window
   // that launchWebAuthFlow would refuse to display anyway.
@@ -170,7 +213,42 @@ function parseRedirect(redirect: string, interactive: boolean): string {
   const expiresIn = Number(params.get('expires_in')) || 3600
   void writeCache({ token, expiresAt: Date.now() + expiresIn * 1000, scopes: SCOPE_KEY })
 
+  // Learn the account once, so every later renewal can be silent.
+  void rememberAccount(token)
+
   return token
+}
+
+async function readAccount(): Promise<string | null> {
+  try {
+    const stored = await store().get(ACCOUNT_KEY)
+    const email = stored[ACCOUNT_KEY]
+    return typeof email === 'string' && email ? email : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Records which account granted the token.
+ *
+ * Best-effort: if this fails the extension still works, it just falls back to
+ * asking the user to sign in when a silent renewal is refused.
+ */
+async function rememberAccount(token: string): Promise<void> {
+  if (await readAccount()) return
+
+  try {
+    const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!response.ok) return
+
+    const info = (await response.json()) as { email?: string }
+    if (info.email) await store().set({ [ACCOUNT_KEY]: info.email })
+  } catch {
+    // No hint available; silent renewal may need a sign-in instead.
+  }
 }
 
 /**
@@ -180,7 +258,7 @@ function parseRedirect(redirect: string, interactive: boolean): string {
 export async function invalidateToken(token: string): Promise<void> {
   if (cached?.token === token) cached = null
   try {
-    await chrome.storage.session.remove(CACHE_KEY)
+    await store().remove(CACHE_KEY)
   } catch {
     // Nothing to clean up.
   }
@@ -191,7 +269,9 @@ export async function signOut(): Promise<void> {
   const token = (await readCache())?.token
   cached = null
   try {
-    await chrome.storage.session.remove(CACHE_KEY)
+    // The account hint goes too: signing out should not leave the next user of
+    // this browser silently pinned to the previous account.
+    await store().remove([CACHE_KEY, ACCOUNT_KEY])
   } catch {
     // Nothing to clean up.
   }

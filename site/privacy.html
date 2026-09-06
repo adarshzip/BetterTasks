@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BetterTasks — Privacy Policy</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        max-width: 42rem;
+        margin: 0 auto;
+        padding: 3rem 1.25rem 6rem;
+        font: 16px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+      h2 { font-size: 1.1rem; margin-top: 2.25rem; }
+      .updated { color: #6b7280; font-size: 0.9rem; margin-top: 0; }
+      table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.95rem; }
+      th, td { text-align: left; padding: 0.5rem 0.75rem 0.5rem 0; vertical-align: top; }
+      th { width: 33%; font-weight: 600; }
+      tr + tr th, tr + tr td { border-top: 1px solid #8883; }
+      code { font-size: 0.9em; }
+      footer { margin-top: 3rem; font-size: 0.9rem; color: #6b7280; }
+    </style>
+  </head>
+  <body>
+    <h1>BetterTasks Privacy Policy</h1>
+    <p class="updated">Last updated 4 September 2026</p>
+
+    <p>
+      BetterTasks is a browser extension that provides an alternative interface for
+      your own Google Tasks and Google Calendar data. It has no server, no
+      database, and no analytics. This policy describes what it accesses and why.
+    </p>
+
+    <h2>The short version</h2>
+    <p>
+      BetterTasks does not collect, store, transmit, sell, or share your personal
+      information. All data stays either in your Google account or in your own
+      browser. Every network request the extension makes goes directly to
+      Google's APIs, authenticated as you, to read and write your own data.
+      There are no other recipients, because there is nowhere else for the data
+      to go.
+    </p>
+
+    <h2>What it accesses, and why</h2>
+    <table>
+      <tr>
+        <th>Google Tasks</th>
+        <td>
+          Read and write your task lists and tasks. This is the extension's core
+          function: displaying, creating, editing, completing, and reordering
+          your tasks.
+        </td>
+      </tr>
+      <tr>
+        <th>Google Calendar</th>
+        <td>
+          Read your events to identify your recurring classes and their colours,
+          and to find free time when suggesting when to work on a task. Create
+          and remove work-session events on a dedicated calendar named
+          "BetterTasks". No other calendar is modified.
+        </td>
+      </tr>
+      <tr>
+        <th>Your email address</th>
+        <td>
+          Read once, so that the extension can name your account when it renews
+          its access token in the background. Without this, Google refuses to
+          refresh silently and you would be asked to sign in every time your
+          browser restarts. The address is stored only in your browser and is
+          never transmitted anywhere except back to Google during sign-in.
+        </td>
+      </tr>
+    </table>
+
+    <h2>What is stored on your device</h2>
+    <p>
+      The extension keeps a small amount of state in your browser's own
+      extension storage:
+    </p>
+    <ul>
+      <li>An access token for your Google account, which expires after one hour.</li>
+      <li>Your email address, used as described above.</li>
+      <li>
+        Display preferences: which view is selected, which sections are
+        collapsed, your preferred ordering of classes, and which suggestions you
+        have dismissed.
+      </li>
+    </ul>
+    <p>
+      None of this leaves your device. It is removed when you sign out or
+      uninstall the extension.
+    </p>
+
+    <h2>Task metadata</h2>
+    <p>
+      Some features, such as class tags, effort estimates, and priorities, are
+      not supported by the Google Tasks API. BetterTasks stores these as a short
+      line of text at the end of the relevant task's own notes field, inside your
+      Google account. This is your data, in your account, visible to you in
+      Google's own apps. It is not sent anywhere else.
+    </p>
+
+    <h2>What is not collected</h2>
+    <p>
+      BetterTasks does not collect analytics or telemetry, does not use cookies
+      or tracking of any kind, does not read your browsing history or the content
+      of web pages, and does not use any third-party service, processor, or
+      advertising network. No data is used to train any model. Nothing is sold.
+    </p>
+
+    <h2>Revoking access</h2>
+    <p>
+      Signing out inside the extension revokes its access token with Google and
+      clears everything stored locally. You can also revoke access at any time at
+      <a href="https://myaccount.google.com/permissions">
+        myaccount.google.com/permissions</a
+      >. Uninstalling the extension removes all local data.
+    </p>
+
+    <h2>Limited use</h2>
+    <p>
+      BetterTasks' use of information received from Google APIs adheres to the
+      <a
+        href="https://developers.google.com/terms/api-services-user-data-policy"
+        >Google API Services User Data Policy</a
+      >, including the Limited Use requirements.
+    </p>
+
+    <h2>Changes</h2>
+    <p>
+      If this policy changes, the revised version will be posted here with an
+      updated date.
+    </p>
+
+    <h2>Contact</h2>
+    <p>
+      Questions about this policy:
+      <a href="mailto:adarshfromhouston@gmail.com">adarshfromhouston@gmail.com</a>
+    </p>
+
+    <footer>
+      <a href="./">Back to BetterTasks</a> ·
+      <a href="./terms.html">Terms of service</a>
+    </footer>
+  </body>
+</html>

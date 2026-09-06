@@ -14,7 +14,7 @@ import type { GTaskList, TaskNode } from '@/model/types'
 import type { Theme } from './theme'
 import type { TasksApi } from '@/state/useTasks'
 import { flattenTree } from '@/model/tree'
-import { categoryOf, resolveCategories } from '@/model/grouping'
+import { categoryOf, defaultListId, resolveCategories } from '@/model/grouping'
 import { projectDrop, type Row } from '@/state/projection'
 import { TaskRow, INDENT } from './TaskRow'
 import { TaskDetail } from './TaskDetail'
@@ -117,7 +117,7 @@ export function TaskTree({
 
 
   // Subtasks inherit their parent's class unless they carry their own.
-  const resolved = resolveCategories(nodes, listTitles, lists[0]?.id)
+  const resolved = resolveCategories(nodes, listTitles, defaultListId(lists))
   const categoryFor = (node: TaskNode): string =>
     resolved.get(node.raw.id)?.category ?? categoryOf(node, listTitles)
 

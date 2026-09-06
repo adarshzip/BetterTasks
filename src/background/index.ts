@@ -109,25 +109,29 @@ async function handle(message: Request): Promise<unknown> {
 /**
  * Debug handle for the service worker console. Dynamic import() is banned in
  * service workers by spec, so there is no other way to reach these functions
- * interactively. Used by the Phase 0 spikes; see docs/SPIKES.md.
+ * interactively. Used by the spikes in docs/SPIKES.md.
+ *
+ * Development only: in a shipped build this would hand anyone with access to
+ * the worker console the whole Tasks and Calendar surface, `getToken`
+ * included.
  */
-Object.assign(globalThis, {
-  bt: {
-    getToken,
-    listEverything,
-    listAllCompleted,
-    createTask,
-    patchTask,
-    deleteTask,
-    moveTask,
-    createTaskList,
-    renameTaskList,
-    clearCompleted,
-    // Exposed for Spike 3, which has to run before any calendar feature is
-    // built. See docs/SPIKES.md.
-    calendar,
-  },
-})
+if (import.meta.env.DEV) {
+  Object.assign(globalThis, {
+    bt: {
+      getToken,
+      listEverything,
+      listAllCompleted,
+      createTask,
+      patchTask,
+      deleteTask,
+      moveTask,
+      createTaskList,
+      renameTaskList,
+      clearCompleted,
+      calendar,
+    },
+  })
+}
 
 /**
  * Four weeks, not one.
@@ -183,7 +187,6 @@ async function ensureWorkCalendar(): Promise<string> {
   }
 
   const created = await calendar.createCalendar(WORK_CALENDAR_NAME)
-  console.info('[bettertasks] created work calendar', created)
   if (!created?.id) throw new Error('Calendar creation returned no id')
 
   // calendars.insert creates the calendar but does not always surface it in the
@@ -215,9 +218,8 @@ async function scheduleTask(message: {
   end: string
 }) {
   const calendarId = await ensureWorkCalendar()
-  console.info('[bettertasks] scheduling on calendar', calendarId, message)
 
-  const event = await calendar.insertEvent(calendarId, {
+  return calendar.insertEvent(calendarId, {
     summary: message.title,
     start: { dateTime: message.start },
     end: { dateTime: message.end },
@@ -225,9 +227,6 @@ async function scheduleTask(message: {
     // Google Calendar, where our metadata block is not visible.
     extendedProperties: { private: { btTaskId: message.taskId } },
   })
-
-  console.info('[bettertasks] calendar returned', event)
-  return event
 }
 
 /**

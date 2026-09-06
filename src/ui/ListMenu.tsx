@@ -15,6 +15,7 @@ interface Props {
   onCreate: (title: string) => void
   onRename: (listId: string, title: string) => void
   onClearCompleted: (listId: string) => void
+  onSignOut: () => void
 }
 
 export function ListMenu({
@@ -24,6 +25,7 @@ export function ListMenu({
   onCreate,
   onRename,
   onClearCompleted,
+  onSignOut,
 }: Props) {
   const [open, setOpen] = useState(false)
   const active = lists.find((l) => l.id === activeListId)
@@ -107,6 +109,20 @@ export function ListMenu({
               }}
             >
               Clear completed
+            </Item>
+
+            <div style={{ height: 1, background: theme.border, margin: '4px 0' }} />
+
+            <Item
+              theme={theme}
+              onClick={() => {
+                setOpen(false)
+                if (window.confirm('Disconnect your Google account from BetterTasks?')) {
+                  onSignOut()
+                }
+              }}
+            >
+              Sign out
             </Item>
           </div>
         </>

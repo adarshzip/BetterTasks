@@ -68,6 +68,9 @@ beforeEach(() => {
     // JSON.parse(JSON.stringify(...)) is not decoration: chrome.runtime
     // .sendMessage serializes with JSON, and sending Date objects through it
     // silently turned them into strings, which crashed the whole panel.
+    commands: {
+      getAll: vi.fn(async () => [{ name: '_execute_action', shortcut: 'Ctrl+Shift+Y' }]),
+    },
     runtime: {
       sendMessage: vi.fn(async (request: { type: string }) => {
         sent.push(request)
@@ -783,6 +786,40 @@ describe('Panel interactions', () => {
     // Google's own clients show it too.
     expect(body).toContain('[QBIO 401] HW1')
     expect(body).toContain('"cat":"QBIO 401"')
+  })
+
+  // The manifest only suggests a binding; the user can rebind or clear it, so
+  // the panel reads what the browser actually has.
+  it('shows the live panel shortcut in the help panel', async () => {
+    const container = await mount()
+    await click(byLabel(container, 'Keyboard shortcuts'))
+
+    expect(container.textContent).toContain('Ctrl+Shift+Y')
+    expect(container.textContent).toContain('Open or close this panel')
+  })
+
+  // An unassigned shortcut used to render as nothing at all, which is
+  // indistinguishable from the feature not existing.
+  it('says where to assign the shortcut when it has no key', async () => {
+    const commands = chrome.commands.getAll as ReturnType<typeof vi.fn>
+    commands.mockResolvedValueOnce([{ name: '_execute_action', shortcut: '' }])
+
+    const container = await mount()
+    await click(byLabel(container, 'Keyboard shortcuts'))
+
+    expect(container.textContent).toContain('Open or close this panel')
+    expect(container.textContent).toContain('Not set')
+    expect(container.textContent).toContain('extensions/shortcuts')
+  })
+
+  it('omits the row entirely when the command is not registered', async () => {
+    const commands = chrome.commands.getAll as ReturnType<typeof vi.fn>
+    commands.mockResolvedValueOnce([])
+
+    const container = await mount()
+    await click(byLabel(container, 'Keyboard shortcuts'))
+
+    expect(container.textContent).not.toContain('Open or close this panel')
   })
 
   it('documents the capture syntax where it can be found', async () => {

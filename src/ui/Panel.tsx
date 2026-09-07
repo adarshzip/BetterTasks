@@ -53,7 +53,30 @@ export function Panel({ theme }: { theme: Theme }) {
   const [query, setQuery] = useState('')
   // Search does not earn a permanent row; it opens from the header or `/`.
   const [searchOpen, setSearchOpen] = useState(false)
+  // '' means the command exists but has no key; null means it was not found.
+  const [panelShortcut, setPanelShortcut] = useState<string | null>(null)
   const [selection, setSelection] = useState<ReadonlySet<string>>(new Set())
+
+  /**
+   * The browser-level shortcut that opens this panel.
+   *
+   * Read from the browser rather than hardcoded, because the manifest only
+   * suggests a binding: the user can change or clear it at
+   * chrome://extensions/shortcuts, and printing a stale key is worse than
+   * printing none.
+   */
+  useEffect(() => {
+    chrome.commands
+      ?.getAll()
+      .then((commands) => {
+        const action = commands.find((command) => command.name === '_execute_action')
+        // A registered command with no shortcut is the common case: the
+        // suggested key collided with something the browser already uses, and
+        // the browser silently leaves it unassigned.
+        setPanelShortcut(action ? action.shortcut ?? '' : null)
+      })
+      .catch(() => setPanelShortcut(null))
+  }, [])
 
   useEffect(() => {
     void loadViewState().then((state) => {
@@ -541,7 +564,7 @@ export function Panel({ theme }: { theme: Theme }) {
         />
       </Header>
 
-      {showHelp && <Shortcuts theme={theme} />}
+      {showHelp && <Shortcuts theme={theme} panelShortcut={panelShortcut} />}
 
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {api.status === 'loading' && <Notice theme={theme}>Loading tasks…</Notice>}
@@ -1003,7 +1026,20 @@ function SearchBox({
   )
 }
 
-function Shortcuts({ theme }: { theme: Theme }) {
+/** Edge and Chrome host the same page at different URLs. */
+function shortcutsUrl(): string {
+  return navigator.userAgent.includes('Edg/')
+    ? 'edge://extensions/shortcuts'
+    : 'chrome://extensions/shortcuts'
+}
+
+function Shortcuts({
+  theme,
+  panelShortcut,
+}: {
+  theme: Theme
+  panelShortcut: string | null
+}) {
   return (
     <div
       style={{
@@ -1018,6 +1054,28 @@ function Shortcuts({ theme }: { theme: Theme }) {
         gap: '4px 10px',
       }}
     >
+      {panelShortcut !== null && (
+        <>
+          <kbd
+            style={{
+              color: panelShortcut ? theme.accent : theme.muted,
+              fontFamily: 'inherit',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {panelShortcut || 'Not set'}
+          </kbd>
+          <span style={{ color: theme.muted }}>
+            Open or close this panel
+            {!panelShortcut && (
+              // An unassigned shortcut otherwise looks identical to a missing
+              // feature, so say where to assign one.
+              <> — assign a key at <code>{shortcutsUrl()}</code></>
+            )}
+          </span>
+        </>
+      )}
+
       {SHORTCUTS.map(([keys, description]) => (
         <Fragment key={keys}>
           <kbd style={{ color: theme.accent, fontFamily: 'inherit', whiteSpace: 'nowrap' }}>

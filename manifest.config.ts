@@ -64,4 +64,26 @@ export default defineManifest({
   },
 
   side_panel: { default_path: 'src/sidepanel/index.html' },
+
+  /**
+   * A keyboard shortcut for the panel.
+   *
+   * `_execute_action` invokes the toolbar action, and the action is configured
+   * to open the side panel (`setPanelBehavior` in the service worker), so this
+   * gets the panel without any code. It also satisfies the user-gesture rule
+   * that makes opening a side panel programmatically impossible otherwise.
+   *
+   * The binding is a suggestion. Users can change or clear it at
+   * chrome://extensions/shortcuts, so the panel reads the live binding rather
+   * than printing this key.
+   */
+  commands: {
+    _execute_action: {
+      suggested_key: {
+        default: 'Ctrl+Shift+Y',
+        mac: 'Command+Shift+Y',
+      },
+      description: 'Open or close the BetterTasks panel',
+    },
+  },
 })

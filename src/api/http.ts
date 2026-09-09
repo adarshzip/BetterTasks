@@ -21,13 +21,17 @@ interface RequestOptions {
 const MAX_ATTEMPTS = 4
 
 /**
- * Authenticated fetch with three behaviours worth naming:
+ * Authenticated fetch with four behaviours worth naming:
  *
  * 1. A 401 invalidates the cached token and retries once. Chrome caches tokens
  *    Google may have already revoked.
  * 2. 429 and 5xx back off exponentially. The Tasks API rate limits readily
  *    when the panel refreshes several lists at once.
- * 3. A 204 or empty body resolves to undefined rather than throwing on
+ * 3. A dropped connection — laptop sleep, wifi handoff, a closed lid mid-sync
+ *    — throws before a response exists at all, rather than as a status code.
+ *    It backs off the same way a 5xx does, since both are "try again shortly",
+ *    and only becomes a thrown error once retries are exhausted.
+ * 4. A 204 or empty body resolves to undefined rather than throwing on
  *    JSON.parse. Tasks delete returns an empty body.
  */
 export async function apiFetch<T>(url: string, options: RequestOptions = {}): Promise<T> {
@@ -41,14 +45,29 @@ export async function apiFetch<T>(url: string, options: RequestOptions = {}): Pr
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const token = await getToken(interactive)
-    const response = await fetch(target, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    })
+
+    let response: Response
+    try {
+      response = await fetch(target, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      })
+    } catch {
+      if (attempt === MAX_ATTEMPTS - 1) {
+        throw new ApiError(
+          0,
+          navigator.onLine
+            ? 'Could not reach Google. Check your connection and try again.'
+            : 'You are offline. Changes will need to be retried once you are back online.',
+        )
+      }
+      await sleep(2 ** attempt * 500)
+      continue
+    }
 
     if (response.status === 401 && !retriedAuth) {
       retriedAuth = true

@@ -249,6 +249,23 @@ export function Panel({ theme }: { theme: Theme }) {
   )
 
   /**
+   * A cross-list move creates a new task id and deletes the old one (the
+   * Tasks API has no cross-list move), so any work block scheduled under the
+   * old id would otherwise be orphaned: never shown again, never deletable
+   * from the panel, sitting on the calendar forever. Clearing it first means
+   * the user reschedules under the new id instead of losing track of it.
+   */
+  const moveTaskToList = useCallback(
+    async (id: string, listId: string) => {
+      const existing = calendar.blocks.get(id)
+      if (existing) await calendar.unschedule(existing.eventId)
+
+      await api.moveToList(id, listId)
+    },
+    [api, calendar],
+  )
+
+  /**
    * Completing a task clears a work block that has not happened yet: an hour
    * blocked out this evening for something already finished is noise. A block
    * in the past is left alone, because it is a record of where time went.
@@ -494,6 +511,7 @@ export function Panel({ theme }: { theme: Theme }) {
       schedulingId={schedulingId}
       onStartScheduling={setSchedulingId}
       onSchedule={scheduleTask}
+      onMoveToList={moveTaskToList}
       onComplete={completeTask}
       sortable={singleList(nodes)}
       collapsed={collapsed}

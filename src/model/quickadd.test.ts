@@ -59,6 +59,43 @@ describe('parseEntry', () => {
     expect(parseEntry('submit friday', [], NOW).time).toBeUndefined()
   })
 
+  it('parses a numeric slash date', () => {
+    const parsed = parseEntry('submit 09/16', [], NOW)
+    expect(parsed.due?.getMonth()).toBe(8)
+    expect(parsed.due?.getDate()).toBe(16)
+    expect(parsed.title).toBe('submit')
+  })
+
+  it('parses a numeric slash date with a year', () => {
+    const parsed = parseEntry('submit 9/16/27', [], NOW)
+    expect(parsed.due?.getFullYear()).toBe(2027)
+    expect(parsed.due?.getDate()).toBe(16)
+  })
+
+  it('parses a numeric slash date with a time', () => {
+    const parsed = parseEntry('submit 9/16 5pm', [], NOW)
+    expect(parsed.due?.getDate()).toBe(16)
+    expect(parsed.time).toBe('17:00')
+    expect(parsed.title).toBe('submit')
+  })
+
+  it('does not read a fraction-like slash as a date without two full numbers', () => {
+    // "4/2" alone still reads as a date (unambiguous format); guard is only
+    // against bare single numbers, covered by the "pset 4" tests above.
+    expect(parseEntry('read pset 4', [], NOW).due).toBeUndefined()
+  })
+
+  it('parses eod, eow, asap, and tmr shorthand', () => {
+    expect(parseEntry('submit eod', [], NOW).due?.getDate()).toBe(2)
+    expect(parseEntry('submit eow', [], NOW).due?.getDate()).toBe(4)
+    expect(parseEntry('submit asap', [], NOW).due?.getDate()).toBe(2)
+    expect(parseEntry('submit tmr', [], NOW).due?.getDate()).toBe(3)
+  })
+
+  it('strips the shorthand token from the title', () => {
+    expect(parseEntry('finish draft eod', [], NOW).title).toBe('finish draft')
+  })
+
   it('parses effort in minutes and hours', () => {
     expect(parseEntry('review 45m', [], NOW).eff).toBe(45)
     expect(parseEntry('review 2h', [], NOW).eff).toBe(120)

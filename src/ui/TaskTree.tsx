@@ -47,6 +47,7 @@ interface Props {
   schedulingId: string | null
   onStartScheduling: (id: string | null) => void
   onSchedule: (node: TaskNode, slot: Interval) => void
+  onMoveToList: (id: string, listId: string) => void
   onComplete: (id: string, completed: boolean) => void
   /** Reordering is only meaningful inside one list; disabled in mixed groups. */
   sortable: boolean
@@ -78,6 +79,7 @@ export function TaskTree({
   schedulingId,
   onStartScheduling,
   onSchedule,
+  onMoveToList,
   onComplete,
   sortable,
   onToggleCollapse,
@@ -238,6 +240,7 @@ export function TaskTree({
             categories={categories}
             theme={theme}
             api={api}
+            onMoveToList={onMoveToList}
             scheduled={blocks.has(node.raw.id)}
             showMore={showMore}
             onToggleMore={onToggleMore}

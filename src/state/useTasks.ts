@@ -35,6 +35,12 @@ export interface UndoEntry {
   label: string
   mutation: Mutation
   listId: string
+  /**
+   * A recurring task completing creates its next occurrence as a side effect,
+   * outside the mutation this entry inverts. Undoing the completion has to
+   * remove that occurrence too, or it survives as an orphaned duplicate.
+   */
+  andDelete?: { listId: string; taskId: string }
 }
 
 export interface TasksApi {
@@ -88,6 +94,12 @@ export function useTasks(): TasksApi {
   const [lists, setLists] = useState<GTaskList[]>([])
   const [tasks, setTasks] = useState<WireTask[]>([])
   const [undo, setUndo] = useState<UndoEntry | null>(null)
+  // Ids whose completion was undone while `regenerate`'s network call for
+  // that same completion was still in flight. `runUndo` clears the undo slot
+  // synchronously, so by the time `regenerate` resolves there is nothing left
+  // for it to attach `andDelete` to — this is checked instead, so the
+  // now-orphaned-from-the-start duplicate it just created still gets removed.
+  const undoneWhileRegenerating = useRef<Set<string>>(new Set())
   const [completedLoaded, setCompletedLoaded] = useState(false)
   const [completedLoading, setCompletedLoading] = useState(false)
 
@@ -310,21 +322,39 @@ export function useTasks(): TasksApi {
       // Each new task is placed after the previous one, so a pasted list keeps
       // the order it was pasted in rather than arriving reversed.
       let previous = lastAnchor(current.current, listId, parent)
+      let created = 0
 
-      for (const title of titles) {
-        const trimmed = title.trim()
-        if (!trimmed) continue
+      // A paste is many sequential requests, so it is also the case most
+      // likely to run into a rate limit or a dropped connection partway
+      // through. Whatever succeeded before that point is already real on the
+      // server and must not be lost: reload to show it and report how far the
+      // batch got, rather than letting the failure vanish as an unhandled
+      // rejection with nothing created ever appearing.
+      try {
+        for (const title of titles) {
+          const trimmed = title.trim()
+          if (!trimmed) continue
 
-        const created = await send<{ id?: string }>({
-          type: 'createTask',
-          listId,
-          task: { title: trimmed },
-          ...(parent ? { parent } : {}),
-          ...(previous ? { previous } : {}),
-        })
-        previous = created?.id ?? previous
+          const result = await send<{ id?: string }>({
+            type: 'createTask',
+            listId,
+            task: { title: trimmed },
+            ...(parent ? { parent } : {}),
+            ...(previous ? { previous } : {}),
+          })
+          previous = result?.id ?? previous
+          created++
+        }
+      } catch (err) {
+        const remaining = titles.length - created
+        setError(
+          created > 0
+            ? `Added ${created} of ${titles.length}, then stopped: ${message(err)}`
+            : `Could not add ${remaining === 1 ? 'the task' : `${remaining} tasks`}: ${message(err)}`,
+        )
+      } finally {
+        if (created > 0) await load({ silent: true })
       }
-      await load({ silent: true })
     },
     [load],
   )
@@ -349,12 +379,18 @@ export function useTasks(): TasksApi {
    * The Tasks API has no concept of recurrence, so the next instance is a new
    * task with a shifted due date. Without this, a weekly problem set is
    * created by hand fourteen times a term.
+   *
+   * Never throws: it runs as a side effect of completing a task, which has
+   * already succeeded by the time this is called, and a failure here should
+   * not read as "completing failed" or vanish as an unhandled rejection.
+   * Resolves to the new task's id so the caller can undo it as a unit with
+   * the completion, or null if nothing was created.
    */
   const regenerate = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<string | null> => {
       const task = find(id)
       const { body, meta } = decodeNotes(task?.notes)
-      if (!task || !task.due) return
+      if (!task || !task.due) return null
 
       // Due values are UTC midnight, so read the calendar date back out of
       // them before doing any date arithmetic.
@@ -364,22 +400,28 @@ export function useTasks(): TasksApi {
         meta,
       )
       // Null means the recurrence has ended, by date or by count.
-      if (!next) return
+      if (!next) return null
 
       const { due } = encodeDue(next.due, meta.time ?? null)
 
-      await send({
-        type: 'createTask',
-        listId: task.listId,
-        // The metadata carries over, so the next instance keeps its class,
-        // effort, and the rest of its recurrence.
-        task: {
-          title: task.title ?? '',
-          notes: encodeNotes(body, next.meta),
-          ...(due ? { due } : {}),
-        },
-      })
-      await load({ silent: true })
+      try {
+        const created = await send<{ id?: string }>({
+          type: 'createTask',
+          listId: task.listId,
+          // The metadata carries over, so the next instance keeps its class,
+          // effort, and the rest of its recurrence.
+          task: {
+            title: task.title ?? '',
+            notes: encodeNotes(body, next.meta),
+            ...(due ? { due } : {}),
+          },
+        })
+        await load({ silent: true })
+        return created?.id ?? null
+      } catch (err) {
+        setError(`Completed, but could not create the next occurrence: ${message(err)}`)
+        return null
+      }
     },
     [find, load],
   )
@@ -396,9 +438,39 @@ export function useTasks(): TasksApi {
         completed ? 'Task completed' : 'Task reopened',
       )
 
-      if (completed) await regenerate(id)
+      if (!completed) return
+      const task = find(id)
+      undoneWhileRegenerating.current.delete(id)
+      const nextId = await regenerate(id)
+      if (!nextId || !task) return
+
+      if (undoneWhileRegenerating.current.has(id)) {
+        // The completion was already undone before this resolved, so the
+        // undo slot is gone and the occurrence just created is orphaned from
+        // the moment it exists. Remove it directly rather than leaving it.
+        undoneWhileRegenerating.current.delete(id)
+        try {
+          await send({ type: 'deleteTask', listId: task.listId, taskId: nextId })
+          await load({ silent: true })
+        } catch {
+          // Best-effort: the task is reopened either way, and this is a
+          // narrow race — surfacing a second error on top of it would be
+          // noisier than useful.
+        }
+        return
+      }
+
+      // Fold the new occurrence into the same undo entry as the completion,
+      // so long as nothing else has claimed the undo slot in the meantime —
+      // otherwise undoing "Task completed" would reopen the task but leave
+      // its freshly created duplicate behind.
+      setUndo((prev) =>
+        prev?.mutation.type === 'patch' && prev.mutation.id === id
+          ? { ...prev, andDelete: { listId: task.listId, taskId: nextId } }
+          : prev,
+      )
     },
-    [patch, regenerate],
+    [patch, regenerate, find, load],
   )
 
   const editTask = useCallback(
@@ -608,15 +680,33 @@ export function useTasks(): TasksApi {
       if (!task || task.listId === listId) return
 
       const before = current.current
+      // create-then-delete, so a failure after the create has already landed
+      // on the server needs different handling than a failure before it: only
+      // the latter can be safely rolled back to `before` without hiding a
+      // task that now genuinely exists twice.
+      let createdOnServer = false
       try {
         await send({
           type: 'createTask',
           listId,
-          task: { title: task.title ?? '', notes: task.notes ?? '', due: task.due ?? '' },
+          task: {
+            title: task.title ?? '',
+            notes: task.notes ?? '',
+            ...(task.due ? { due: task.due } : {}),
+          },
         })
+        createdOnServer = true
         await send({ type: 'deleteTask', listId: task.listId, taskId: id })
         await load({ silent: true })
       } catch (err) {
+        if (createdOnServer) {
+          // The copy exists in the new list; only removing the original
+          // failed. Reloading (rather than reverting to `before`) shows the
+          // real, duplicated state instead of quietly hiding it.
+          setError(`Copied to the new list, but the original could not be removed: ${message(err)}`)
+          await load({ silent: true })
+          return
+        }
         setTasks(before)
         setError(message(err))
       }
@@ -631,6 +721,12 @@ export function useTasks(): TasksApi {
 
     const { mutation, listId } = entry
     setTasks((prev) => applyMutation(prev, mutation))
+
+    // If this patch is a completion undo racing an in-flight `regenerate`
+    // for the same task, flag it so that once `regenerate` resolves it
+    // cleans up the occurrence it creates directly, instead of trying to
+    // attach it to an undo slot that no longer exists.
+    if (mutation.type === 'patch') undoneWhileRegenerating.current.add(mutation.id)
 
     try {
       switch (mutation.type) {
@@ -660,6 +756,16 @@ export function useTasks(): TasksApi {
             ...(mutation.previous ? { previous: mutation.previous } : {}),
           })
           break
+      }
+      // Undoing a recurring task's completion also removes the next
+      // occurrence that completing it created, so undo does not leave a
+      // duplicate behind.
+      if (entry.andDelete) {
+        await send({
+          type: 'deleteTask',
+          listId: entry.andDelete.listId,
+          taskId: entry.andDelete.taskId,
+        })
       }
       await load({ silent: true })
     } catch (err) {

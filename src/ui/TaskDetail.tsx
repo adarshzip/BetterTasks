@@ -19,6 +19,7 @@ interface Props {
   categories: string[]
   theme: Theme
   api: TasksApi
+  onMoveToList: (id: string, listId: string) => void
   scheduled: boolean
   showMore: boolean
   onToggleMore: (next: boolean) => void
@@ -33,6 +34,7 @@ export function TaskDetail({
   categories,
   theme,
   api,
+  onMoveToList,
   scheduled,
   showMore,
   onToggleMore,
@@ -153,7 +155,7 @@ export function TaskDetail({
             <select
               aria-label="List"
               value={node.listId}
-              onChange={(e) => void api.moveToList(id, e.target.value)}
+              onChange={(e) => onMoveToList(id, e.target.value)}
               style={{ ...inputStyle(theme), flex: 1 }}
             >
               {lists.map((list) => (

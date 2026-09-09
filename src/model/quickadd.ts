@@ -95,20 +95,47 @@ function takeCategory(text: string, known: string[]): { value: string; rest: str
   return null
 }
 
+/** e.g. 9/16, 09/16, 9/16/26, 9/16/2026 — unambiguous enough to skip the letter check below. */
+const SLASH_DATE = /^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?$/
+
+/** Shorthand chrono does not know, rewritten to text it does before parsing. */
+const SHORTHAND: Array<[RegExp, string]> = [
+  [/\beod\b/i, 'today 11:59pm'],
+  [/\beow\b/i, 'friday'],
+  [/\basap\b/i, 'today'],
+  [/\btmr\b/i, 'tomorrow'],
+]
+
 /**
- * Only accepts a date whose matched text contains a letter. A bare number is
- * far more likely to be part of the task ("pset 4", "chapter 12") than a day
- * of the month, and chrono cannot tell the difference.
+ * Only accepts a date whose matched text contains a letter, or is an
+ * unambiguous slash date. A bare number is far more likely to be part of the
+ * task ("pset 4", "chapter 12") than a day of the month, and chrono cannot
+ * tell the difference — but "9/16" cannot mean anything else.
  */
 function takeDate(
   text: string,
   now: Date,
 ): { value: Date; time?: string; rest: string } | null {
-  const [result] = chrono.parse(text, now, { forwardDate: true })
-  if (!result || !/[a-z]/i.test(result.text)) return null
+  // Shorthand is a standalone token that expands to a full phrase chrono
+  // already understands, so the original token — not chrono's match, which
+  // is now in the expanded text — is what has to come out of the title.
+  let expanded = text
+  let shorthandMatch: string | null = null
+  for (const [pattern, replacement] of SHORTHAND) {
+    const found = expanded.match(pattern)
+    if (found) {
+      shorthandMatch = found[0]
+      expanded = expanded.replace(pattern, replacement)
+      break
+    }
+  }
+
+  const [result] = chrono.parse(expanded, now, { forwardDate: true })
+  if (!result) return null
+  if (!/[a-z]/i.test(result.text) && !SLASH_DATE.test(result.text.trim())) return null
 
   const date = result.start.date()
-  const rest = text.replace(result.text, ' ')
+  const rest = shorthandMatch ? text.replace(shorthandMatch, ' ') : text.replace(result.text, ' ')
 
   // A time is only real if chrono actually saw one; otherwise it defaults to
   // midday and we would invent a due time the user never typed.

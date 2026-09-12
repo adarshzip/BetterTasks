@@ -80,8 +80,8 @@ export default defineManifest({
   commands: {
     _execute_action: {
       suggested_key: {
-        default: 'Ctrl+Shift+Z',
-        mac: 'Command+Shift+Z',
+        default: 'Ctrl+Shift+X',
+        mac: 'Command+Shift+X',
       },
       description: 'Open or close the BetterTasks panel',
     },

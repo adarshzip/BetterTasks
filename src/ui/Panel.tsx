@@ -1166,7 +1166,14 @@ function ReorderButton({
 }
 
 function Notice({ theme, children }: { theme: Theme; children: React.ReactNode }) {
-  return <div style={{ fontSize: 12, color: theme.muted, padding: '8px 0' }}>{children}</div>
+  // Matches the gap a Section's own marginBottom leaves between two stacked
+  // sections, so whatever follows — Completed, Scheduled for later — doesn't
+  // read as glued directly under the message.
+  return (
+    <div style={{ fontSize: 12, color: theme.muted, padding: '8px 0', marginBottom: 14 }}>
+      {children}
+    </div>
+  )
 }
 
 function buttonStyle(theme: Theme): React.CSSProperties {

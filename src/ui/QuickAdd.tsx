@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { GTaskList } from '@/model/types'
-import type { Theme } from './theme'
+import { readableAccent, type Theme } from './theme'
 import { parseEntry, type ParsedEntry } from '@/model/quickadd'
 import { formatEffort } from './TaskRow'
 
@@ -183,7 +183,7 @@ function Preview({
           style={{
             padding: '1px 6px',
             borderRadius: 999,
-            color: chip.color ?? theme.muted,
+            color: chip.color ? readableAccent(chip.color, theme) : theme.muted,
             border: `1px solid ${chip.color ? `${chip.color}66` : theme.border}`,
             background: chip.color ? `${chip.color}1a` : 'transparent',
           }}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildTree, flattenTree, progressByParent, toTask } from './tree'
+import { buildTree, descendantIds, flattenTree, progressByParent, toTask } from './tree'
 import type { GTask } from './types'
 
 const task = (id: string, extra: Partial<GTask> = {}): GTask => ({
@@ -107,6 +107,33 @@ describe('flattenTree', () => {
   it('hides descendants of a collapsed node', () => {
     const roots = build([task('a'), task('a1', { parent: 'a' }), task('b')])
     expect(ids(flattenTree(roots, new Set(['a'])))).toEqual(['a', 'b'])
+  })
+})
+
+describe('descendantIds', () => {
+  it('returns every task beneath a root, at any depth', () => {
+    const tasks = [
+      { id: 'a' },
+      { id: 'a1', parent: 'a' },
+      { id: 'a1x', parent: 'a1' },
+      { id: 'a2', parent: 'a' },
+      { id: 'b' },
+      { id: 'b1', parent: 'b' },
+    ]
+    expect(descendantIds(tasks, 'a').sort()).toEqual(['a1', 'a1x', 'a2'])
+  })
+
+  it('returns nothing for a leaf', () => {
+    expect(descendantIds([{ id: 'a' }, { id: 'a1', parent: 'a' }], 'a1')).toEqual([])
+  })
+
+  it('does not loop on a parent cycle', () => {
+    const tasks = [
+      { id: 'a', parent: 'b' },
+      { id: 'b', parent: 'a' },
+      { id: 'c', parent: 'a' },
+    ]
+    expect(descendantIds(tasks, 'a').sort()).toEqual(['b', 'c'])
   })
 })
 

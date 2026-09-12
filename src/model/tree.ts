@@ -137,6 +137,41 @@ export function flattenTree(roots: TaskNode[], collapsed: ReadonlySet<string> = 
   return out
 }
 
+/**
+ * Every task beneath `rootId`, at any depth, from a flat list.
+ *
+ * Used when an action on a parent has to reach its whole subtree — completing
+ * a parent completes its subtasks. Walks `parent` pointers rather than the
+ * built tree so it works on the raw list before completed tasks are pruned.
+ * Cycle-safe: a task already seen is never followed twice.
+ */
+export function descendantIds<T extends { id: string; parent?: string }>(
+  tasks: readonly T[],
+  rootId: string,
+): string[] {
+  const byParent = new Map<string, T[]>()
+  for (const task of tasks) {
+    if (!task.parent) continue
+    const siblings = byParent.get(task.parent)
+    if (siblings) siblings.push(task)
+    else byParent.set(task.parent, [task])
+  }
+
+  const out: string[] = []
+  const seen = new Set<string>([rootId])
+  const queue = [rootId]
+  while (queue.length) {
+    const parent = queue.shift() as string
+    for (const child of byParent.get(parent) ?? []) {
+      if (seen.has(child.id)) continue
+      seen.add(child.id)
+      out.push(child.id)
+      queue.push(child.id)
+    }
+  }
+  return out
+}
+
 export interface Progress {
   done: number
   total: number

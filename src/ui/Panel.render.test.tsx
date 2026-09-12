@@ -216,6 +216,32 @@ describe('Panel interactions', () => {
     expect(patch).toMatchObject({ taskId: 'p', patch: { status: 'completed' } })
   })
 
+  it('completes subtasks when the parent is completed', async () => {
+    const container = await mount()
+    await click(byLabel(container, 'Complete Project'))
+
+    const patched = sent.filter((r) => r.type === 'patchTask').map((r) => r.taskId)
+    expect(patched).toContain('c')
+  })
+
+  it('undo of a parent completion reopens the subtasks it closed', async () => {
+    const container = await mount()
+    await click(byLabel(container, 'Complete Project'))
+    sent.length = 0
+
+    await click(
+      [...container.querySelectorAll('button')].find((b) => b.textContent === 'Undo'),
+    )
+
+    const reopened = sent
+      .filter(
+        (r) =>
+          r.type === 'patchTask' && (r.patch as { status?: string }).status === 'needsAction',
+      )
+      .map((r) => r.taskId)
+    expect(reopened).toEqual(expect.arrayContaining(['p', 'c']))
+  })
+
   // The panel opens in the due view, which shows only outstanding work, so a
   // completed task leaves the list immediately.
   it('applies the completion optimistically in the due view', async () => {
@@ -235,8 +261,14 @@ describe('Panel interactions', () => {
     await click(container.querySelector('[role="button"][aria-label^="Completed"]'))
 
     await click(byLabel(container, 'Reopen Project'))
-    expect(sent.filter((r) => r.type === 'patchTask')).toHaveLength(2)
-    expect(sent.at(-1)).toMatchObject({ patch: { status: 'needsAction' } })
+    // Completing the parent also completed its subtask "Step one"; reopening
+    // the parent from the checkbox only touches the parent itself.
+    const patches = sent.filter((r) => r.type === 'patchTask')
+    expect(patches).toMatchObject([
+      { taskId: 'p', patch: { status: 'completed' } },
+      { taskId: 'c', patch: { status: 'completed' } },
+      { taskId: 'p', patch: { status: 'needsAction' } },
+    ])
     expect(byLabel(container, 'Complete Project')).toBeTruthy()
   })
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useDraft } from './Draft'
 import type { TaskNode } from '@/model/types'
-import type { Theme } from './theme'
+import { readableAccent, type Theme } from './theme'
 import type { Progress } from '@/model/tree'
 import { notePreview } from '@/model/metadata'
 import { describeEnd } from '@/model/recurrence'
@@ -210,7 +210,7 @@ export function TaskRow({
         )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, flexWrap: 'wrap' }}>
-          {showCategory && <Pill label={category} color={categoryColour} />}
+          {showCategory && <Pill label={category} color={categoryColour} theme={theme} />}
 
           {node.due && (
             <span style={{ fontSize: 11, color: overdue ? '#f28b82' : theme.muted }}>
@@ -279,7 +279,11 @@ function Connector({ depth, theme }: { depth: number; theme: Theme }) {
   )
 }
 
-function Pill({ label, color }: { label: string; color: string }) {
+function Pill({ label, color, theme }: { label: string; color: string; theme: Theme }) {
+  // The tint and border stay at the category's true colour — only the text,
+  // which needs to hold up at 10px against the page background, gets
+  // darkened for legibility in light mode.
+  const text = readableAccent(color, theme)
   return (
     <span
       style={{
@@ -287,7 +291,7 @@ function Pill({ label, color }: { label: string; color: string }) {
         fontWeight: 500,
         padding: '1px 6px',
         borderRadius: 999,
-        color,
+        color: text,
         border: `1px solid ${color}66`,
         background: `${color}1a`,
         whiteSpace: 'nowrap',

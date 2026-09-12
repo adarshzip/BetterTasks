@@ -5,6 +5,7 @@ import { send, PanelError } from '@/lib/messaging'
 import { decodeNotes, encodeNotes, withMeta, type MetaPatch } from '@/model/metadata'
 import { encodeDue } from '@/model/dates'
 import { nextOccurrence } from '@/model/recurrence'
+import { descendantIds } from '@/model/tree'
 import type { Suggestion } from '@/model/triage'
 import { applyClassPrefix, stripClassPrefix } from '@/model/title'
 import {
@@ -41,6 +42,12 @@ export interface UndoEntry {
    * remove that occurrence too, or it survives as an orphaned duplicate.
    */
   andDelete?: { listId: string; taskId: string }
+  /**
+   * Completing a parent also completes its subtasks. Undoing the completion
+   * has to reopen exactly those subtasks — the ones this action closed, not
+   * any that were already done.
+   */
+  alsoReopen?: { listId: string; taskId: string }[]
 }
 
 export interface TasksApi {
@@ -440,6 +447,46 @@ export function useTasks(): TasksApi {
 
       if (!completed) return
       const task = find(id)
+
+      // A checked-off parent above still-open subtasks reads as unfinished, so
+      // completing a parent completes its whole subtree. Only the subtasks
+      // this closes are recorded, so undo reopens exactly those and leaves
+      // any that were already done alone. Each is its own write; the parent
+      // has already succeeded, so this is best-effort and a reload reconciles.
+      const kids = descendantIds(current.current, id)
+        .map((kid) => current.current.find((t) => t.id === kid))
+        .filter((t): t is WireTask => !!t && t.status !== 'completed')
+
+      if (kids.length) {
+        const kidIds = new Set(kids.map((k) => k.id))
+        setTasks((prev) =>
+          prev.map((t) => (kidIds.has(t.id) ? { ...t, status: 'completed' as const } : t)),
+        )
+
+        const closed: { listId: string; taskId: string }[] = []
+        try {
+          for (const kid of kids) {
+            await send({
+              type: 'patchTask',
+              listId: kid.listId,
+              taskId: kid.id,
+              patch: { status: 'completed' },
+            })
+            closed.push({ listId: kid.listId, taskId: kid.id })
+          }
+        } catch (err) {
+          setError(`Task completed, but a subtask could not be: ${message(err)}`)
+        }
+
+        if (closed.length) {
+          setUndo((prev) =>
+            prev?.mutation.type === 'patch' && prev.mutation.id === id
+              ? { ...prev, alsoReopen: closed }
+              : prev,
+          )
+        }
+      }
+
       undoneWhileRegenerating.current.delete(id)
       const nextId = await regenerate(id)
       if (!nextId || !task) return
@@ -720,7 +767,15 @@ export function useTasks(): TasksApi {
     setUndo(null)
 
     const { mutation, listId } = entry
-    setTasks((prev) => applyMutation(prev, mutation))
+    setTasks((prev) => {
+      let next = applyMutation(prev, mutation)
+      for (const child of entry.alsoReopen ?? []) {
+        next = next.map((t) =>
+          t.id === child.taskId ? { ...t, status: 'needsAction' as const } : t,
+        )
+      }
+      return next
+    })
 
     // If this patch is a completion undo racing an in-flight `regenerate`
     // for the same task, flag it so that once `regenerate` resolves it
@@ -765,6 +820,15 @@ export function useTasks(): TasksApi {
           type: 'deleteTask',
           listId: entry.andDelete.listId,
           taskId: entry.andDelete.taskId,
+        })
+      }
+      // Reopen the subtasks that completing this parent closed.
+      for (const child of entry.alsoReopen ?? []) {
+        await send({
+          type: 'patchTask',
+          listId: child.listId,
+          taskId: child.taskId,
+          patch: { status: 'needsAction', completed: undefined as unknown as string },
         })
       }
       await load({ silent: true })

@@ -24,8 +24,12 @@ export default defineManifest({
   version: '1.0.0',
   description: 'A better Google Tasks panel for Google Calendar.',
 
-  // Pinning the key fixes the extension id, which the OAuth client is bound to.
-  ...(local.key ? { key: local.key } : {}),
+  // Pinning the key fixes the extension id for an unpacked dev install, which
+  // is what the OAuth client's dev redirect URI is bound to. A store-bound
+  // build must NOT carry this: the Chrome Web Store assigns its own id and
+  // rejects any manifest.json that has a `key` field at all. `npm run
+  // build:store` sets BT_STORE_BUILD to produce that manifest.
+  ...(local.key && !process.env.BT_STORE_BUILD ? { key: local.key } : {}),
 
   permissions: ['identity', 'storage', 'sidePanel'],
   // Narrowed to the endpoints actually called. `www.googleapis.com/*` granted

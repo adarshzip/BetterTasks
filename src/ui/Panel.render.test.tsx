@@ -16,6 +16,8 @@ import { detectTheme } from './theme'
 let sent: { type: string; [k: string]: unknown }[] = []
 /** Work blocks the fake calendar reports; mutated per test. */
 let blocks: unknown[] = []
+/** Which snapshot `loadAll` hands back; swapped mid-test to simulate a second account's lists. */
+let activeSnapshot: unknown = null
 
 /** A snapshot shaped exactly like one the service worker would send. */
 const SNAPSHOT = {
@@ -63,6 +65,7 @@ const SNAPSHOT = {
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date(2026, 8, 2, 9, 0))
+  activeSnapshot = SNAPSHOT
 
   vi.stubGlobal('chrome', {
     // JSON.parse(JSON.stringify(...)) is not decoration: chrome.runtime
@@ -75,7 +78,7 @@ beforeEach(() => {
       sendMessage: vi.fn(async (request: { type: string }) => {
         sent.push(request)
         if (request.type === 'loadAll') {
-          return { ok: true, data: JSON.parse(JSON.stringify(SNAPSHOT)) }
+          return { ok: true, data: JSON.parse(JSON.stringify(activeSnapshot)) }
         }
         if (request.type === 'loadCompleted') return { ok: true, data: [] }
         if (request.type === 'loadBusy') return { ok: true, data: [] }
@@ -206,6 +209,29 @@ describe('Panel interactions', () => {
   it('offers a quick add field', async () => {
     const container = await mount()
     expect(byLabel(container, 'Add a task')).toBeTruthy()
+  })
+
+  // A second account's lists have entirely different ids. The add field
+  // defaulted to the first list once and never revisited that choice, so
+  // switching accounts left it pointing at a list id that no longer existed
+  // — creating a task failed with "Task list not found".
+  it('re-defaults the add field to a new list when the active one disappears', async () => {
+    const container = await mount()
+
+    activeSnapshot = {
+      lists: [{ id: 'other-account-list', title: 'Personal' }],
+      tasks: [],
+    }
+    await click(container.querySelector('[aria-label="Refresh"]'))
+
+    const field = byLabel(container, 'Add a task') as HTMLInputElement
+    await typeInto(field, 'new thing')
+    await act(async () => {
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+
+    const created = sent.find((r) => r.type === 'createTask')
+    expect(created).toMatchObject({ listId: 'other-account-list' })
   })
 
   it('completes a task through the checkbox', async () => {

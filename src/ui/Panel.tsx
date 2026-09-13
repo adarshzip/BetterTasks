@@ -87,9 +87,14 @@ export function Panel({ theme }: { theme: Theme }) {
     })
   }, [])
 
-  // Default the add field to the first list once lists arrive.
+  // Default the add field to the first list once lists arrive, and re-default
+  // it if the active one ever stops existing — not just on first load. A
+  // second account signed into the same session has entirely different list
+  // ids, and without this, the add field kept pointing at the previous
+  // account's list id, so adding a task failed with "Task list not found".
   useEffect(() => {
-    if (!activeListId && api.lists[0]) setActiveListId(api.lists[0].id)
+    if (api.lists.length === 0) return
+    if (!api.lists.some((l) => l.id === activeListId)) setActiveListId(api.lists[0]!.id)
   }, [api.lists, activeListId])
 
   const persist = useCallback(

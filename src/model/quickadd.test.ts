@@ -30,6 +30,12 @@ describe('parseEntry', () => {
     expect(parsed.title).toBe('draft intro')
   })
 
+  it('turns underscores in a hash tag into spaces, for a multi-word category', () => {
+    const parsed = parseEntry('draft intro #senior_thesis', [], NOW)
+    expect(parsed.category).toBe('senior thesis')
+    expect(parsed.title).toBe('draft intro')
+  })
+
   // The trap: chrono reads bare numbers as days of the month, so "pset 4"
   // would become "due the 4th" and lose the 4 from the title.
   it('does not treat a bare number as a date', () => {

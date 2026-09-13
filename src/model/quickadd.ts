@@ -38,7 +38,7 @@ export interface ParsedEntry {
   pri?: number
 }
 
-/** e.g. #thesis, for categories that are not course codes */
+/** e.g. #thesis or #senior_thesis, for categories that are not course codes */
 const TAG = /(?:^|\s)#([\w-]+)/
 /** e.g. 30m, 2h, 1.5h */
 const EFFORT = /(?:^|\s)(\d+(?:\.\d+)?)\s?(m|min|mins|h|hr|hrs)\b/i
@@ -87,7 +87,10 @@ function takeCategory(text: string, known: string[]): { value: string; rest: str
   }
 
   const tag = text.match(TAG)
-  if (tag?.[1]) return { value: tag[1], rest: text.replace(TAG, ' ') }
+  // A hashtag can't contain a literal space without becoming ambiguous with
+  // the rest of the title, so an underscore stands in for one — #senior_thesis
+  // creates the category "senior thesis" rather than literally "senior_thesis".
+  if (tag?.[1]) return { value: tag[1].replace(/_/g, ' '), rest: text.replace(TAG, ' ') }
 
   const course = courseCodeOf(text)
   if (course) return { value: course, rest: text.replace(COURSE, ' ') }

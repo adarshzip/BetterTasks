@@ -80,7 +80,14 @@ export function TaskRow({
 
   const hasChildren = node.children.length > 0
   const preview = notePreview(node.notes)
-  const overdue = node.due !== null && !node.completed && node.due < new Date()
+  // A due date with no time attached is stored as local midnight (see
+  // parseDue in tree.ts), so comparing it against the clock directly turned
+  // "due today" red at 12:00am — hours before anything was actually late.
+  // Without a real time, the deadline is the end of the day, not its start.
+  const deadline = node.due && !node.meta.time
+    ? new Date(node.due.getFullYear(), node.due.getMonth(), node.due.getDate(), 23, 59, 59, 999)
+    : node.due
+  const overdue = deadline !== null && !node.completed && deadline < new Date()
 
   return (
     <div

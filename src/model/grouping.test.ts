@@ -319,9 +319,14 @@ describe('completed tasks linger in the class view', () => {
     expect(groups[0]?.nodes[0]?.completed).toBe(true)
   })
 
-  it('keeps a task due today for the rest of the day', () => {
-    const { urgent } = inClassView([done('todayish', { due: at(0) })])
-    expect(urgent.map((n) => n.raw.id)).toEqual(['todayish'])
+  // A completed task never counts as urgent itself — being done and being
+  // overdue are unrelated, and pulling a finished task into "Overdue and
+  // today" reads as blaming the user for something already taken care of.
+  // It stays crossed out in its own class group instead.
+  it('keeps a task due today in its class group, not "Overdue and today"', () => {
+    const { urgent, groups } = inClassView([done('todayish', { due: at(0) })])
+    expect(urgent).toHaveLength(0)
+    expect(groups[0]?.nodes.map((n) => n.raw.id)).toEqual(['todayish'])
   })
 
   it('drops a completed task once its due date has passed', () => {

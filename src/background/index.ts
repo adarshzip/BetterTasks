@@ -173,7 +173,7 @@ const WORK_CALENDAR_KEY = 'bettertasks:workCalendarId'
  * the user deletes the calendar in Google Calendar, a stale id would make
  * every schedule attempt fail with a 404 that reads like a bug.
  */
-async function ensureWorkCalendar(): Promise<string> {
+async function ensureWorkCalendarUncached(): Promise<string> {
   const calendars = await calendar.listCalendars()
 
   const stored = await chrome.storage.local.get(WORK_CALENDAR_KEY)
@@ -195,6 +195,25 @@ async function ensureWorkCalendar(): Promise<string> {
 
   await chrome.storage.local.set({ [WORK_CALENDAR_KEY]: created.id })
   return created.id
+}
+
+/**
+ * Two callers can both land here before either has written the cached id —
+ * `loadBlocks` on the panel opening and `scheduleTask` on the first "Schedule"
+ * click, or two panel windows open at once, all talking to this one worker.
+ * Both would see no cached id and no existing calendar and each create one,
+ * which is how a user ends up with two calendars named "BetterTasks". Sharing
+ * one in-flight promise means every concurrent caller within this worker's
+ * lifetime awaits the same lookup-or-create instead of racing it.
+ */
+let ensuringWorkCalendar: Promise<string> | null = null
+async function ensureWorkCalendar(): Promise<string> {
+  if (!ensuringWorkCalendar) {
+    ensuringWorkCalendar = ensureWorkCalendarUncached().finally(() => {
+      ensuringWorkCalendar = null
+    })
+  }
+  return ensuringWorkCalendar
 }
 
 /**

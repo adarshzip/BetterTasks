@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:store": "tsc --noEmit && BT_STORE_BUILD=1 vite build",
     "test": "vitest run",
     "test:watch": "vitest"
   },

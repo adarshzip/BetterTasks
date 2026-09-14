@@ -112,12 +112,16 @@ export function isDeferred(task: Task, now = new Date()): boolean {
 }
 
 /**
- * Overdue or due today. Completed tasks are not excluded here: a task that is
- * completed but still lingering should stay in the group it was in, crossed
- * out, rather than jumping somewhere else.
+ * Overdue or due today, and not yet done.
+ *
+ * Completed is excluded on purpose: a finished task that is still lingering
+ * (see `lingers`, below) should stay crossed out in the group it was already
+ * in — its class, in the class view — rather than jumping to "Overdue and
+ * today" the moment its due date passes, which reads as blaming the user for
+ * something they already took care of.
  */
 export function isUrgent(task: Task, now = new Date()): boolean {
-  if (!task.due) return false
+  if (!task.due || task.completed) return false
   return task.due <= endOfDay(now)
 }
 

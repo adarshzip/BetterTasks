@@ -6,5 +6,7 @@ dist/
 extension.local.json
 *.pem
 *.key
+*.crx
+dist.zip
 credentials*.json
 .DS_Store
